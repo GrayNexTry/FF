@@ -6,7 +6,6 @@ from flask import Flask, Response
 
 from config import whitelist
 
-
 class UDPHandler(socketserver.BaseRequestHandler):
     def handle(self):
         buffer_lock = self.server.buffer_lock
@@ -16,14 +15,14 @@ class UDPHandler(socketserver.BaseRequestHandler):
         data, socket = self.request
         client_addr = self.client_address
 
-        # Проверяем клиента в белом списке
+        # Добавление клиента в список, если его там нет
         with clients_lock:
             if client_addr[0] in whitelist:
                 if client_addr not in self.server.clients:
                     self.server.clients.append(client_addr)
-                    print(f"{client_addr} добавлен в список клиентов.")
+                    print(f"{client_addr} added to clients.")
             else:
-                return  # Игнорируем неавторизованных клиентов
+                return  # Игнорировать клиентов, не входящих в белый список
 
         header = data[:8]
         payload = data[8:]
@@ -33,7 +32,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
         packet_num = int.from_bytes(header[4:6], 'big')
         total_packets = int.from_bytes(header[6:8], 'big')
 
-        # Работа с буфером пакетов
+        # Инициализация буфера для клиента и пакета
         if client_addr[0] in whitelist:
             with buffer_lock:
                 if client_addr not in self.server.buffer:
@@ -45,33 +44,29 @@ class UDPHandler(socketserver.BaseRequestHandler):
 
                 client_buffer[packet_seq][packet_num] = payload
 
-                # Проверяем, все ли пакеты кадра получены
+                # Проверка, все ли пакеты кадра получены
                 if all(part is not None for part in client_buffer[packet_seq]):
-                    # Собираем кадр
+                    # Сборка пакетов
                     frame_data = b''.join(client_buffer[packet_seq])
-
-                    # Декодируем H.264 в изображение
                     frame = np.frombuffer(frame_data, dtype=np.uint8)
                     frame = cv2.imdecode(frame, cv2.IMREAD_COLOR)
 
                     if frame is not None:
                         with frames_lock:
-                            self.server.frames[client_addr] = frame  # Сохраняем кадр для отображения
+                            self.server.frames[client_addr] = frame  # Сохранение кадра для отображения
 
-                    # Удаляем обработанный буфер
+                    # Очистка буфера кадра
                     del client_buffer[packet_seq]
 
-                    # Удаляем буфер клиента, если он пуст
+                    # Очистка буфера клиента, если он пуст
                     if not client_buffer:
                         del self.server.buffer[client_addr]
-
 
 # Flask-приложение для веб-трансляции
 app = Flask(__name__)
 
 # Глобальная ссылка на сервер
 server_instance = None
-
 
 # Генератор MJPEG для трансляции
 def mjpeg_stream():
@@ -90,11 +85,9 @@ def mjpeg_stream():
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_data + b'\r\n')
 
-
 @app.route('/video_feed')
 def video_feed():
     return Response(mjpeg_stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
 
 if __name__ == "__main__":
     HOST, PORT = '0.0.0.0', 50005
@@ -145,3 +138,4 @@ if __name__ == "__main__":
 
     # Запускаем UDP-сервер
     server.serve_forever()
+

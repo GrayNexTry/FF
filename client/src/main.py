@@ -2,71 +2,76 @@ import cv2
 import socket
 import threading
 import sys
-import numpy as np
-
 from config import MTU_SIZE, ID_DEVICE
 
+# Константы
+JPEG_QUALITY = 50
 
 # Функция для отправки кадров по UDP
 def send_video(ip, port):
     try:
         server_address = (ip, int(port))
     except ValueError:
-        print("Неправильный формат IP-адреса или порта.")
-        sys.exit()
+        print("\u2717 Неправильный формат IP-адреса или порта.")
+        sys.exit(1)
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    cap = cv2.VideoCapture(0)  # Камера 0
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        cap = cv2.VideoCapture(0)
 
-    # Настройка кодека H.264
-    fourcc = cv2.VideoWriter_fourcc(*'H264')
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30  # Фиксируем FPS для стабильности
+        if not cap.isOpened():
+            print("\u2717 Не удалось открыть камеру.")
+            sys.exit(1)
 
-    # Создание видеопотока сжатия
-    out = cv2.VideoWriter('appsrc ! videoconvert ! x264enc tune=zerolatency bitrate=500 speed-preset=superfast ! appsink',
-                          fourcc, fps, (width, height))
+        packet_seq = 0
 
-    PACKET_SEQ = 0  # Номер последовательности пакетов
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("\u2717 Не удалось считать кадр с камеры.")
+                break
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+            # Кодирование кадра в JPEG
+            success, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+            if not success:
+                print("\u2717 Ошибка при кодировании кадра.")
+                continue
 
-        # Сжатие с использованием H.264
-        out.write(frame)
-        _, buffer = cv2.imencode('.h264', frame)
+            data = buffer.tobytes()
 
-        data = buffer.tobytes()
+            # Разбиение буфера на пакеты
+            total_packets = (len(data) + MTU_SIZE - 1) // MTU_SIZE
 
-        # Разбиение буфера на пакеты
-        total_packets = len(data) // MTU_SIZE + (1 if len(data) % MTU_SIZE else 0)
+            for i in range(total_packets):
+                start = i * MTU_SIZE
+                end = start + MTU_SIZE
+                packet = data[start:end]
 
-        for i in range(total_packets):
-            start = i * MTU_SIZE
-            end = start + MTU_SIZE
-            packet = data[start:end]
+                # Добавление заголовка с номером последовательности
+                header = (
+                    packet_seq.to_bytes(4, 'big') +
+                    i.to_bytes(2, 'big') +
+                    total_packets.to_bytes(2, 'big')
+                )
 
-            # Добавление заголовка с номером последовательности
-            header = PACKET_SEQ.to_bytes(4, 'big') + i.to_bytes(2, 'big') + total_packets.to_bytes(2, 'big')
-            s.sendto(header + packet, server_address)
+                s.sendto(header + packet, server_address)
 
-        PACKET_SEQ = (PACKET_SEQ + 1) % 2**32
-
-    cap.release()
-    out.release()
-    s.close()
-
+            packet_seq = (packet_seq + 1) % 2**32
+    
+    except Exception as e:
+        print(f"\u2717 Произошла ошибка: {e}")
+    finally:
+        cap.release()
+        s.close()
 
 # Функция для дополнительного потока
 def another_task():
-    while True:
-        # Пример задачи
-        print("Работает другой поток...")
-        threading.Event().wait(5)  # Задержка для примера
-
+    try:
+        while True:
+            print("\u2714 Работает другой поток...")
+            threading.Event().wait(5)
+    except Exception as e:
+        print(f"\u2717 Ошибка в дополнительном потоке: {e}")
 
 if __name__ == "__main__":
     # Получение IP и порта от пользователя
@@ -74,21 +79,26 @@ if __name__ == "__main__":
 
     try:
         ip, port = connect.strip().split(':')
+        port = int(port)
     except ValueError:
-        print("Неправильный формат IP-адреса или порта.")
-        sys.exit()
+        print("\u2717 Неправильный формат IP-адреса или порта.")
+        sys.exit(1)
 
     # Создание потоков
-    video_thread = threading.Thread(target=send_video, args=(ip, port), daemon=True)
-    additional_thread = threading.Thread(target=another_task, daemon=True)
-
-    # Запуск потоков
-    video_thread.start()
-    additional_thread.start()
-
-    # Ожидание завершения потоков
     try:
+        video_thread = threading.Thread(target=send_video, args=(ip, port), daemon=True)
+        additional_thread = threading.Thread(target=another_task, daemon=True)
+
+        # Запуск потоков
+        video_thread.start()
+        additional_thread.start()
+
+        # Ожидание завершения потоков
         video_thread.join()
         additional_thread.join()
     except KeyboardInterrupt:
-        print("Завершение работы...")
+        print("\n\u2714 Завершение работы...")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\u2717 Непредвиденная ошибка: {e}")
+        sys.exit(1)
