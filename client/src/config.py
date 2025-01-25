@@ -1,0 +1,3 @@
+ID_DEVICE = ""
+
+MTU_SIZE = 1400
