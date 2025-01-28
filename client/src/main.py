@@ -14,6 +14,7 @@ def send_video(ip, port):
 
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(5)
         cap = cv2.VideoCapture(0)
 
         if not cap.isOpened():

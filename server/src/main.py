@@ -1,81 +1,113 @@
 import socketserver
+import time
 import numpy as np
 import cv2
 import threading
 
-from config import whitelist
+from config import WHITELIST, TIMEOUT
 
 def display_frames():
-        while True:
-            with server.frames_lock:
-                frames = server.frames.copy()
+    while True:
+        with server.frames_lock:
+            frames = list(server.frames.values())
 
-            if frames:
-                for client_addr, frame in frames.items():
-                    window_name = f"{client_addr[0]}:{client_addr[1]}"
-                    cv2.imshow(window_name, frame)
+        if frames:
+            # Объединяем все кадры для отображения
+            combined_frame = cv2.hconcat(frames)
+            cv2.imshow("Clients", combined_frame)
+        else:
+            # Если кадров нет, очищаем окно
+            blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.imshow("Clients", blank_frame)
 
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    break
+        # Проверяем нажатие клавиши
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
 
-        cv2.destroyAllWindows()
-        server.shutdown()
+    cv2.destroyAllWindows()
+    server.shutdown()
+
+
+
+def cleanup_inactive_clients():
+    while True:
+        time.sleep(1)
+        current_time = time.time()
+
+        with server.clients_lock:
+            inactive_clients = []
+            for client_addr in server.clients:
+                last_active = server.last_activity.get(client_addr, 0)
+                if current_time - last_active > TIMEOUT:
+                    inactive_clients.append(client_addr)
+
+            for client_addr in inactive_clients:
+                server.clients.remove(client_addr)
+                with server.frames_lock:
+                    server.frames.pop(client_addr, None)
+                with server.buffer_lock:
+                    server.buffer.pop(client_addr, None)
+                server.last_activity.pop(client_addr, None)
+                print(f"{client_addr} отключен по таймауту.")
+
 class UDPHandler(socketserver.BaseRequestHandler):
     def handle(self):
-        buffer_lock = self.server.buffer_lock
-        clients_lock = self.server.clients_lock
-        frames_lock = self.server.frames_lock
+        try:
+            buffer_lock = self.server.buffer_lock
+            clients_lock = self.server.clients_lock
+            frames_lock = self.server.frames_lock
 
-        data, socket = self.request
-        client_addr = self.client_address
+            data, socket = self.request
+            client_addr = self.client_address
 
-        # Добавление клиента в список, если его там нет
-        with clients_lock:
+            with clients_lock:
+                if client_addr[0] in WHITELIST:
+                    if client_addr not in self.server.clients:
+                        self.server.clients.append(client_addr)
+                        self.server.last_activity[client_addr] = time.time()  # Инициализация активности
+                        print(f"{client_addr} подключился.")
+                else:
+                    return  # Игнорировать клиентов, не входящих в белый список
+
+            # Обновление активности клиента
+            self.server.last_activity[client_addr] = time.time()
+
+            header = data[:8]
+            payload = data[8:]
+
+            # Извлечение заголовка
+            packet_seq = int.from_bytes(header[:4], 'big')
+            packet_num = int.from_bytes(header[4:6], 'big')
+            total_packets = int.from_bytes(header[6:8], 'big')
+
             if client_addr[0] in whitelist:
-                if client_addr not in self.server.clients:
-                    self.server.clients.append(client_addr)
-                    print(f"{client_addr} подключился.")
-            else:
-                return  # Игнорировать клиентов, не входящих в белый список
+                with buffer_lock:
+                    if client_addr not in self.server.buffer:
+                        self.server.buffer[client_addr] = {}
+                    client_buffer = self.server.buffer[client_addr]
 
-        header = data[:8]
-        payload = data[8:]
+                    if packet_seq not in client_buffer:
+                        client_buffer[packet_seq] = [None] * total_packets
 
-        # Извлечение заголовка
-        packet_seq = int.from_bytes(header[:4], 'big')
-        packet_num = int.from_bytes(header[4:6], 'big')
-        total_packets = int.from_bytes(header[6:8], 'big')
+                    client_buffer[packet_seq][packet_num] = payload
 
-        # Инициализация буфера для клиента и пакета
-        if client_addr[0] in whitelist:
-            with buffer_lock:
-                if client_addr not in self.server.buffer:
-                    self.server.buffer[client_addr] = {}
-                client_buffer = self.server.buffer[client_addr]
+                    if all(part is not None for part in client_buffer[packet_seq]):
+                        frame_data = b''.join(client_buffer[packet_seq])
+                        frame = np.frombuffer(frame_data, dtype=np.uint8)
+                        frame = cv2.imdecode(frame, cv2.IMREAD_COLOR)
 
-                if packet_seq not in client_buffer:
-                    client_buffer[packet_seq] = [None] * total_packets
+                        if frame is not None:
+                            with frames_lock:
+                                self.server.frames[client_addr] = frame
 
-                client_buffer[packet_seq][packet_num] = payload
+                        del client_buffer[packet_seq]
 
-                # Проверка, все ли пакеты кадра получены
-                if all(part is not None for part in client_buffer[packet_seq]):
-                    # Сборка пакетов
-                    frame_data = b''.join(client_buffer[packet_seq])
-                    frame = np.frombuffer(frame_data, dtype=np.uint8)
-                    frame = cv2.imdecode(frame, cv2.IMREAD_COLOR)
+                        if not client_buffer:
+                            del self.server.buffer[client_addr]
+        except Exception as e:
+            print(f"Ошибка при обработке данных от {self.client_address}: {e}")
 
-                    if frame is not None:
-                        with frames_lock:
-                            self.server.frames[client_addr] = frame  # Сохранение кадра для отображения
-
-                    # Очистка буфера кадра
-                    del client_buffer[packet_seq]
-
-                    # Очистка буфера клиента, если он пуст
-                    if not client_buffer:
-                        del self.server.buffer[client_addr]
 if __name__ == "__main__":
     HOST, PORT = '0.0.0.0', 50005
 
@@ -89,12 +121,17 @@ if __name__ == "__main__":
     server.frames = {}  # {client_addr: frame}
     server.frames_lock = threading.Lock()
 
-    server.clients = []
+    server.clients = []  # [client_addr]
     server.clients_lock = threading.Lock()
 
     # Запускаем поток для отображения кадров локально
     display_frames_thread = threading.Thread(target=display_frames, daemon=True)
     display_frames_thread.start()
+
+    # Timeout
+    cleanup_thread = threading.Thread(target=cleanup_inactive_clients, daemon=True)
+    cleanup_thread.start()
+    server.last_activity = {}  # {client_addr: timestamp}
 
 
     # Запускаем UDP-сервер
