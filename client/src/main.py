@@ -71,10 +71,8 @@ if __name__ == "__main__":
     # Создание потоков
     try:
         video_thread = threading.Thread(target=send_video, args=(ip, port), daemon=True)
-        # additional_thread = threading.Thread(target=another_task, daemon=True)
         # Запуск потоков
         video_thread.start()
-        # additional_thread.start()
         # Ожидание завершения потоков
         video_thread.join()
         # additional_thread.join()
