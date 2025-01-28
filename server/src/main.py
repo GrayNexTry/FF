@@ -28,8 +28,6 @@ def display_frames():
     cv2.destroyAllWindows()
     server.shutdown()
 
-
-
 def cleanup_inactive_clients():
     while True:
         time.sleep(1)
@@ -81,7 +79,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
             packet_num = int.from_bytes(header[4:6], 'big')
             total_packets = int.from_bytes(header[6:8], 'big')
 
-            if client_addr[0] in whitelist:
+            if client_addr[0] in WHITELIST:
                 with buffer_lock:
                     if client_addr not in self.server.buffer:
                         self.server.buffer[client_addr] = {}
@@ -111,8 +109,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
 if __name__ == "__main__":
     HOST, PORT = '0.0.0.0', 50005
 
-    class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
-        pass
+    class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer): pass
 
     server = ThreadedUDPServer((HOST, PORT), UDPHandler)
     server.buffer = {}  # {client_addr: {packet_seq: [packets]}}
@@ -132,7 +129,6 @@ if __name__ == "__main__":
     cleanup_thread = threading.Thread(target=cleanup_inactive_clients, daemon=True)
     cleanup_thread.start()
     server.last_activity = {}  # {client_addr: timestamp}
-
 
     # Запускаем UDP-сервер
     server.serve_forever()

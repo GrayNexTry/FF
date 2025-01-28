@@ -2,7 +2,9 @@ import cv2
 import socket
 import threading
 import sys
-from config import MTU_SIZE, ID_DEVICE, JPEG_QUALITY
+import time
+
+from config import MTU_SIZE, ID_DEVICE, JPEG_QUALITY, FPS
 
 # Функция для отправки кадров по UDP
 def send_video(ip, port):
@@ -56,6 +58,8 @@ def send_video(ip, port):
 
             packet_seq = (packet_seq + 1) % 2**32
 
+            time.sleep(delay)  # Ограничение FPS
+
     except Exception as e:
         print(f"Произошла ошибка: {e}")
     finally:
@@ -81,6 +85,8 @@ if __name__ == "__main__":
     except ValueError:
         print("Неправильный формат IP-адреса или порта.")
         sys.exit(1)
+
+    delay = 1 / FPS
 
     # Создание потоков
     try:
