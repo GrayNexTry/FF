@@ -17,7 +17,7 @@ frame = None
 frame_lock = threading.Lock()
 ret = None
 ret_lock = threading.Lock()
-now_time = "None"
+now_time = "NONE | 00:00:00"
 now_time_lock = threading.Lock()
 
 def get_time():
@@ -25,13 +25,14 @@ def get_time():
     while True:
         t = time.localtime()
         now_time = time.strftime("%H:%M:%S", t)
-
         time.sleep(1)
 
 def get_video():
     global frame, ret, now_time
 
-    (text_width, text_height), baseline = cv2.getTextSize(f'{now_time}', cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+    text = f"{ID_DEVICE} | {now_time}"
+
+    (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
     x = (640 - text_width) // 16
     y = (480 + text_height) // 16
 
@@ -40,9 +41,10 @@ def get_video():
         logging.error("Не удалось открыть камеру.")
         sys.exit(1)
     while True:
+        text = f"{ID_DEVICE} | {now_time}"
         with ret_lock:
             ret, frame = cap.read()
-            frame = cv2.putText(frame, f'{now_time}',(x,y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
+            frame = cv2.putText(frame, text,(x,y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
         if not ret:
             logging.error("Не удалось считать кадр с камеры.")
             break
