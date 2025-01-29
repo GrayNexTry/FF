@@ -1,128 +1,168 @@
+# Импорты всяких штук для работы с сетью, картинками и т.д.
 import socketserver
 import time
 import numpy as np
 import cv2
+import socket
 import threading
 import logging
 from config import WHITELIST, TIMEOUT
+from web_server import app
 
-# Настройка логирования
+# Настраиваем логер чтобы видеть что происходит
 logging.basicConfig(level=logging.INFO)
 
-def display_frames():
-    while True:
-        with server.frames_lock:
-            frames = list(server.frames.values())
-        if frames:
-            # Объединяем все кадры для отображения
-            combined_frame = cv2.hconcat(frames)
-            cv2.imshow("Clients", combined_frame)
-        else:
-            # Если кадров нет, очищаем окно
+# Класс для UDP сервера с потоками (чтобы всё не лагало)
+class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
+    daemon_threads = True  # Потоки сами умрут когда надо
+    block_on_close = False
 
-            blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.buffer = {}    # Здесь храним кусочки видео от клиентов
+        self.frames = {}    # Собранные кадры для отображения
+        self.clients = []   # Подключенные клиенты
+        self.last_activity = {}  # Когда последний раз что-то присылали
+        # Локи чтобы не было гонки данных между потоками
+        self.buffer_lock = threading.Lock()
+        self.frames_lock = threading.Lock()
+        self.clients_lock = threading.Lock()
 
-            (text_width, text_height), baseline = cv2.getTextSize('NO DATA', cv2.FONT_HERSHEY_SIMPLEX, 2, 6)
-            x = (640 - text_width) // 2
-            y = (480 + text_height) // 2
-            blank_frame = cv2.putText(blank_frame, 'NO DATA',(x,y), cv2.FONT_HERSHEY_SIMPLEX, 2, (255,255,255), 6, cv2.LINE_AA)
-            cv2.imshow("Clients", blank_frame)
-        # Проверяем нажатие клавиши
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
-            break
-    cv2.destroyAllWindows()
-    server.shutdown()
-
-def cleanup_inactive_clients():
-    while True:
-        time.sleep(1)
-        current_time = time.time()
-        with server.clients_lock:
-            inactive_clients = []
-            for client_addr in server.clients:
-                last_active = server.last_activity.get(client_addr, 0)
-                if current_time - last_active > TIMEOUT:
-                    inactive_clients.append(client_addr)
-            for client_addr in inactive_clients:
-                if client_addr in server.clients:
-                    server.clients.remove(client_addr)
-                with server.frames_lock:
-                    server.frames.pop(client_addr, None)
-                with server.buffer_lock:
-                    server.buffer.pop(client_addr, None)
-                server.last_activity.pop(client_addr, None)
-                logging.info(f"{client_addr} отключен по таймауту.")
-
+# Обработчик входящих UDP пакетов
 class UDPHandler(socketserver.BaseRequestHandler):
     def handle(self):
         try:
-            buffer_lock = self.server.buffer_lock
-            clients_lock = self.server.clients_lock
-            frames_lock = self.server.frames_lock
             data, socket = self.request
-            client_addr = self.client_address
-            with clients_lock:
+            client_addr = self.client_address  # Адрес того, кто прислал данные
+
+            # Проверяем белый список чтобы пускать только своих
+            with self.server.clients_lock:
                 if client_addr[0] in WHITELIST:
                     if client_addr not in self.server.clients:
                         self.server.clients.append(client_addr)
-                        self.server.last_activity[client_addr] = time.time()  # Инициализация активности
+                        self.server.last_activity[client_addr] = time.time()
                         logging.info(f"{client_addr} подключился.")
                 else:
-                    return  # Игнорировать клиентов, не входящих в белый список
-            # Обновление активности клиента
+                    return  # Если не в белом списке, игнорируем
+
+            # Обновляем время последней активности
             self.server.last_activity[client_addr] = time.time()
+
+            # Разбираем заголовок пакета
             header = data[:8]
             payload = data[8:]
-            # Извлечение заголовка
-            packet_seq = int.from_bytes(header[:4], 'big')
-            packet_num = int.from_bytes(header[4:6], 'big')
-            total_packets = int.from_bytes(header[6:8], 'big')
-            if client_addr[0] in WHITELIST:
-                with buffer_lock:
-                    if client_addr not in self.server.buffer:
-                        self.server.buffer[client_addr] = {}
-                    client_buffer = self.server.buffer[client_addr]
-                    if packet_seq not in client_buffer:
-                        client_buffer[packet_seq] = [None] * total_packets
-                    client_buffer[packet_seq][packet_num] = payload
-                    if all(part is not None for part in client_buffer[packet_seq]):
-                        frame_data = b''.join(client_buffer[packet_seq])
-                        frame = np.frombuffer(frame_data, dtype=np.uint8)
-                        frame = cv2.imdecode(frame, cv2.IMREAD_COLOR)
-                        if frame is not None:
-                            with frames_lock:
-                                self.server.frames[client_addr] = frame
-                        del client_buffer[packet_seq]
-                        if not client_buffer:
-                            del self.server.buffer[client_addr]
+            packet_seq = int.from_bytes(header[:4], 'big')      # Номер кадра
+            packet_num = int.from_bytes(header[4:6], 'big')     # Номер пакета
+            total_packets = int.from_bytes(header[6:8], 'big')  # Всего пакетов
+
+            # Собираем кадр из кусочков
+            with self.server.buffer_lock:
+                if client_addr not in self.server.buffer:
+                    self.server.buffer[client_addr] = {}
+
+                client_buffer = self.server.buffer[client_addr]
+                if packet_seq not in client_buffer:
+                    client_buffer[packet_seq] = [None] * total_packets
+
+                # Записываем кусочек в нужное место
+                client_buffer[packet_seq][packet_num] = payload
+
+                # Если все кусочки кадра собраны
+                if all(part is not None for part in client_buffer[packet_seq]):
+                    frame_data = b''.join(client_buffer[packet_seq])  # Склеиваем
+                    frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_UNCHANGED)
+
+                    if frame is not None:
+                        with self.server.frames_lock:
+                            self.server.frames[client_addr] = frame  # Сохраняем кадр
+
+                    del client_buffer[packet_seq]  # Чистим память
+                    if not client_buffer:
+                        del self.server.buffer[client_addr]
+
         except Exception as e:
             logging.error(f"Ошибка при обработке данных от {self.client_address}: {e}")
 
-if __name__ == "__main__":
-    HOST, PORT = '0.0.0.0', 50005
-    try:
-        class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer): pass
-        server = ThreadedUDPServer((HOST, PORT), UDPHandler)
-        server.buffer = {}  # {client_addr: {packet_seq: [packets]}}
-        server.buffer_lock = threading.Lock()
-        server.frames = {}  # {client_addr: frame}
-        server.frames_lock = threading.Lock()
-        server.clients = []  # [client_addr]
-        server.clients_lock = threading.Lock()
-        # Запускаем поток для отображения кадров локально
-        display_frames_thread = threading.Thread(target=display_frames, daemon=True)
-        display_frames_thread.start()
-        # Timeout
-        cleanup_thread = threading.Thread(target=cleanup_inactive_clients, daemon=True)
-        cleanup_thread.start()
-        server.last_activity = {}  # {client_addr: timestamp}
-        # Запускаем UDP-сервер
-        server.serve_forever()
+# Показываем собранные кадры в окне P.S нафиг не надо с вебкой
+# def display_frames(server):
+#     while getattr(server, '_BaseServer__is_shut_down', False) is False:
+#         try:
+#             with server.frames_lock:
+#                 frames = list(server.frames.values())
 
+#             if frames:
+#                 combined_frame = cv2.hconcat(frames)  # Склеиваем кадры горизонтально
+#                 cv2.imshow("All Clients", combined_frame)
+#             else:
+#                 # Показываем заглушку если кадров нет
+#                 blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+#                 cv2.putText(blank_frame, 'NO DATA', (200, 250),
+#                            cv2.FONT_HERSHEY_SIMPLEX, 2, (255,255,255), 6)
+#                 cv2.imshow("All Clients", blank_frame)
+
+#             if cv2.waitKey(1) & 0xFF == ord('q'):  # Выход по Q
+#                 server.shutdown()
+#                 break
+#         except Exception as e:
+#             logging.error(f"Ошибка в отображении: {e}")
+#             break
+
+#     cv2.destroyAllWindows()
+
+# Удаляем клиентов которые долго не пишут
+def cleanup_inactive_clients(server):
+    while getattr(server, '_BaseServer__is_shut_down', False) is False:
+        time.sleep(1)
+        current_time = time.time()
+        with server.clients_lock:
+            # Ищем тех, кто превысил таймаут
+            inactive_clients = [
+                addr for addr in server.clients
+                if current_time - server.last_activity.get(addr, 0) > TIMEOUT
+            ]
+            for addr in inactive_clients:
+                # Чистим все данные по клиенту
+                server.clients.remove(addr)
+                with server.frames_lock:
+                    server.frames.pop(addr, None)
+                with server.buffer_lock:
+                    server.buffer.pop(addr, None)
+                server.last_activity.pop(addr, None)
+                logging.info(f"{addr} отключен по таймауту.")
+
+# Запускаем всё здесь
+if __name__ == "__main__":
+    HOST, PORT = '0.0.0.0', 50005       # Настройки для UDP
+    WEB_HOST, WEB_PORT = '0.0.0.0', 5000  # Настройки для веб-сервера
+
+    server = ThreadedUDPServer((HOST, PORT), UDPHandler)
+    server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4*1024*1024)  # Буфер побольше
+
+    app.config['server'] = server  # Даем веб-серверу доступ к нашему серверу
+
+    # Запускаем три важные штуки параллельно
+    threads = [
+        threading.Thread(target=cleanup_inactive_clients, args=(server,)),  # Очистка
+        # threading.Thread(target=display_frames, args=(server,)),            # Показ видео нафиг не надо с вебкой
+        threading.Thread(target=app.run, kwargs={                           # Веб-интерфейс
+            'host': WEB_HOST,
+            'port': WEB_PORT,
+            'debug': False,
+            'use_reloader': False
+        })
+    ]
+
+    for t in threads:
+        t.daemon = True  # Чтобы потоки умерли когда основной умрет
+        t.start()
+
+    try:
+        logging.info(f"Сервер слушает на {HOST}:{PORT}")
+        logging.info(f"Вебка доступна тут: http://{WEB_HOST}:{WEB_PORT}")
+        server.serve_forever()  # Главный цикл сервера
     except KeyboardInterrupt:
-        logging.info("\nЗавершение работы...")
-        sys.exit(0)
-    except Exception as e:
-        logging.error(f"Непредвиденная ошибка: {e}")
-        sys.exit(1)
+        logging.info("Выключение...")
+    finally:
+        server.shutdown()
+        server.server_close()
+        cv2.destroyAllWindows()

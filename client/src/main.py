@@ -1,3 +1,4 @@
+# Импорты для работы с видео, сетью и потоками
 import cv2
 import socket
 import threading
@@ -6,118 +7,143 @@ import time
 import logging
 from config import MTU_SIZE, ID_DEVICE, JPEG_QUALITY, FPS
 
-# Настройка логирования
+# Настройка логов чтобы видеть ошибки
 logging.basicConfig(level=logging.INFO)
 
-# Интервал отправки кадров
+# Задержка между кадрами (вычисляем из FPS)
 DELAY = 1 / FPS
 
-# Глобальные переменные для обмена данными между потоками
-frame = None
-frame_lock = threading.Lock()
-ret = None
-ret_lock = threading.Lock()
-now_time = "NONE | 00:00:00"
-now_time_lock = threading.Lock()
+# Общие переменные между потоками (с блокировками!)
+frame = None  # Текущий кадр с камеры
+frame_lock = threading.Lock()  # Замок для кадра
+now_time = "NONE | 00:00:00"  # Текущее время для надписи
+now_time_lock = threading.Lock()  # Замок для времени
 
+# Поток для обновления времени каждую секунду
 def get_time():
     global now_time
     while True:
         t = time.localtime()
-        now_time = time.strftime("%H:%M:%S", t)
+        with now_time_lock:  # Блокируем доступ на запись
+            now_time = time.strftime("%H:%M:%S", t)
         time.sleep(1)
 
+# Поток для захвата видео с камеры
 def get_video():
-    global frame, ret, now_time
-
-    text = f"{ID_DEVICE} | {now_time}"
-
-    (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-    x = (640 - text_width) // 16
-    y = (480 + text_height) // 16
-
+    global frame
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        logging.error("Не удалось открыть камеру.")
+        logging.error("Камера не работает! Проверь подключение.")
         sys.exit(1)
-    while True:
-        text = f"{ID_DEVICE} | {now_time}"
-        with ret_lock:
-            ret, frame = cap.read()
-            frame = cv2.putText(frame, text,(x,y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
-        if not ret:
-            logging.error("Не удалось считать кадр с камеры.")
-            break
-        time.sleep(DELAY)  # Ограничение FPS
 
-# Функция для отправки кадров по UDP
+    # Рассчитываем позицию текста один раз
+    text = f"{ID_DEVICE} | 00:00:00"  # Шаблон
+    (text_width, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+    x = (640 - text_width) // 16
+    y = 30
+
+    while True:
+        # Читаем кадр и добавляем текст
+        ret, current_frame = cap.read()
+        if not ret:
+            logging.error("Не могу прочитать кадр! Камера сломалась?")
+            break
+
+        # Обновляем время в тексте с блокировкой
+        with now_time_lock:  # Блокируем доступ на чтение
+            time_text = f"{ID_DEVICE} | {now_time}"
+
+        # Рисуем текст на кадре
+        frame_with_text = cv2.putText(
+            current_frame, time_text, (x, y),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA
+        )
+
+        # Сохраняем кадр с блокировкой
+        with frame_lock:
+            frame = frame_with_text.copy()
+
+        time.sleep(DELAY)  # Ждем перед следующим кадром
+
+# Поток для отправки видео через UDP
 def send_video(ip, port):
-    global frame, ret
+    server_address = (ip, port)
+
     try:
-        server_address = (ip, int(port))
-    except ValueError:
-        logging.error("Неправильный формат IP-адреса или порта.")
-        sys.exit(1)
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(5)
-        packet_seq = 0
+        # Создаем UDP-сокет с таймаутом
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(5)
+
+        packet_seq = 0  # Счетчик пакетов
+
         while True:
+            # Берем текущий кадр с блокировкой
             with frame_lock:
                 current_frame = frame
+
             if current_frame is None:
-                continue
-            # Кодирование кадра в JPEG
-            success, buffer = cv2.imencode('.jpg', current_frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+                continue  # Пропускаем если кадра нет
+
+            # Конвертируем в JPEG
+            success, buffer = cv2.imencode(
+                '.jpg', current_frame,
+                [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
+            )
             if not success:
-                logging.error("Ошибка при кодировании кадра.")
+                logging.warning("Не смог сжать кадр в JPEG!")
                 continue
+
             data = buffer.tobytes()
-            # Разбиение буфера на пакеты
             total_packets = (len(data) + MTU_SIZE - 1) // MTU_SIZE
+
+            # Отправляем все пакеты кадра
             for i in range(total_packets):
                 start = i * MTU_SIZE
                 end = start + MTU_SIZE
-                packet = data[start:end]
-                # Добавление заголовка с номером последовательности
+                chunk = data[start:end]
+
+                # Собираем заголовок:
+                # 4 байта - номер кадра, 2 - номер пакета, 2 - всего пакетов
                 header = (
                     packet_seq.to_bytes(4, 'big') +
                     i.to_bytes(2, 'big') +
                     total_packets.to_bytes(2, 'big')
                 )
-                s.sendto(header + packet, server_address)
-            packet_seq = (packet_seq + 1) % 2**32
-            time.sleep(DELAY)  # Ограничение FPS
-    except Exception as e:
-        logging.error(f"Произошла ошибка: {e}")
-    finally:
-        s.close()
+                sock.sendto(header + chunk, server_address)
 
-if __name__ == "__main__":
-    # Получение IP и порта от пользователя
-    connect = input("Введите (ip:port): ")
-    try:
-        ip, port = connect.strip().split(':')
-        port = int(port)
-    except ValueError:
-        logging.error("Неправильный формат IP-адреса или порта.")
-        sys.exit(1)
-    # Создание потоков
-    try:
-        send_video_thread = threading.Thread(target=send_video, args=(ip, port), daemon=True)
-        get_video_thread = threading.Thread(target=get_video, daemon=True)
-        get_time_thread = threading.Thread(target=get_time, daemon=True)
-        # Запуск потоков
-        send_video_thread.start()
-        get_video_thread.start()
-        get_time_thread.start()
-        # Ожидание завершения потоков
-        send_video_thread.join()
-        get_video_thread.join()
-        get_time_thread.join()
-    except KeyboardInterrupt:
-        logging.info("\nЗавершение работы...")
-        sys.exit(0)
+            packet_seq = (packet_seq + 1) % 2**32  # Чтобы не переполнилось
+            time.sleep(DELAY)
+
     except Exception as e:
-        logging.error(f"Непредвиденная ошибка: {e}")
+        logging.error(f"Ошибка отправки: {e}")
+    finally:
+        sock.close()
+
+# Запуск всего хозяйства
+if __name__ == "__main__":
+    # Получаем данные для подключения
+    connect = input("Сервак кормушек, формат: ip:port: ").strip()
+    try:
+        ip, port_str = connect.split(':')
+        port = int(port_str)
+    except:
+        logging.error("Неправильный формат! Пример: 192.168.1.10:50005")
         sys.exit(1)
+
+    # Запускаем все потоки
+    threads = [
+        threading.Thread(target=get_time, daemon=True),
+        threading.Thread(target=get_video, daemon=True),
+        threading.Thread(target=send_video, args=(ip, port), daemon=True)
+    ]
+
+    for t in threads:
+        t.start()
+
+    # Ждем завершения (или Ctrl+C)
+    try:
+        while any(t.is_alive() for t in threads):
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logging.info("Выключаемся...")
+        sys.exit(0)
