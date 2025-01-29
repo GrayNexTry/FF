@@ -19,7 +19,13 @@ def display_frames():
             cv2.imshow("Clients", combined_frame)
         else:
             # Если кадров нет, очищаем окно
+
             blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+            (text_width, text_height), baseline = cv2.getTextSize('NO DATA', cv2.FONT_HERSHEY_SIMPLEX, 2, 6)
+            x = (640 - text_width) // 2
+            y = (480 + text_height) // 2
+            blank_frame = cv2.putText(blank_frame, 'NO DATA',(x,y), cv2.FONT_HERSHEY_SIMPLEX, 2, (255,255,255), 6, cv2.LINE_AA)
             cv2.imshow("Clients", blank_frame)
         # Проверяем нажатие клавиши
         key = cv2.waitKey(1) & 0xFF
@@ -95,20 +101,28 @@ class UDPHandler(socketserver.BaseRequestHandler):
 
 if __name__ == "__main__":
     HOST, PORT = '0.0.0.0', 50005
-    class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer): pass
-    server = ThreadedUDPServer((HOST, PORT), UDPHandler)
-    server.buffer = {}  # {client_addr: {packet_seq: [packets]}}
-    server.buffer_lock = threading.Lock()
-    server.frames = {}  # {client_addr: frame}
-    server.frames_lock = threading.Lock()
-    server.clients = []  # [client_addr]
-    server.clients_lock = threading.Lock()
-    # Запускаем поток для отображения кадров локально
-    display_frames_thread = threading.Thread(target=display_frames, daemon=True)
-    display_frames_thread.start()
-    # Timeout
-    cleanup_thread = threading.Thread(target=cleanup_inactive_clients, daemon=True)
-    cleanup_thread.start()
-    server.last_activity = {}  # {client_addr: timestamp}
-    # Запускаем UDP-сервер
-    server.serve_forever()
+    try:
+        class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer): pass
+        server = ThreadedUDPServer((HOST, PORT), UDPHandler)
+        server.buffer = {}  # {client_addr: {packet_seq: [packets]}}
+        server.buffer_lock = threading.Lock()
+        server.frames = {}  # {client_addr: frame}
+        server.frames_lock = threading.Lock()
+        server.clients = []  # [client_addr]
+        server.clients_lock = threading.Lock()
+        # Запускаем поток для отображения кадров локально
+        display_frames_thread = threading.Thread(target=display_frames, daemon=True)
+        display_frames_thread.start()
+        # Timeout
+        cleanup_thread = threading.Thread(target=cleanup_inactive_clients, daemon=True)
+        cleanup_thread.start()
+        server.last_activity = {}  # {client_addr: timestamp}
+        # Запускаем UDP-сервер
+        server.serve_forever()
+
+    except KeyboardInterrupt:
+        logging.info("\nЗавершение работы...")
+        sys.exit(0)
+    except Exception as e:
+        logging.error(f"Непредвиденная ошибка: {e}")
+        sys.exit(1)
