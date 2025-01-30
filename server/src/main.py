@@ -6,6 +6,7 @@ import cv2
 import socket
 import threading
 import logging
+from threading import RLock
 from config import WHITELIST, TIMEOUT
 from web_server import app
 
@@ -21,12 +22,12 @@ class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
         super().__init__(*args, **kwargs)
         self.buffer = {}    # Здесь храним кусочки видео от клиентов
         self.frames = {}    # Собранные кадры для отображения
-        self.clients = []   # Подключенные клиенты
+        self.clients = set()   # Подключенные клиенты
         self.last_activity = {}  # Когда последний раз что-то присылали
         # Локи чтобы не было гонки данных между потоками
-        self.buffer_lock = threading.Lock()
-        self.frames_lock = threading.Lock()
-        self.clients_lock = threading.Lock()
+        self.buffer_lock = threading.RLock()
+        self.frames_lock = threading.RLock()
+        self.clients_lock = threading.RLock()
 
 # Обработчик входящих UDP пакетов
 class UDPHandler(socketserver.BaseRequestHandler):
@@ -39,7 +40,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
             with self.server.clients_lock:
                 if client_addr[0] in WHITELIST:
                     if client_addr not in self.server.clients:
-                        self.server.clients.append(client_addr)
+                        self.server.clients.add(client_addr)
                         self.server.last_activity[client_addr] = time.time()
                         logging.info(f"{client_addr} подключился.")
                 else:
@@ -122,7 +123,7 @@ def cleanup_inactive_clients(server):
             ]
             for addr in inactive_clients:
                 # Чистим все данные по клиенту
-                server.clients.remove(addr)
+                server.clients.discard(addr)
                 with server.frames_lock:
                     server.frames.pop(addr, None)
                 with server.buffer_lock:

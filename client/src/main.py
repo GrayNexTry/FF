@@ -32,6 +32,7 @@ def get_time():
 def get_video():
     global frame
     cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FPS, FPS)
     if not cap.isOpened():
         logging.error("Камера не работает! Проверь подключение.")
         sys.exit(1)
