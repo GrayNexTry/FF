@@ -2,14 +2,16 @@ import time
 import logging
 import cv2
 from flask import Flask, Response, render_template_string, abort, jsonify
-from config import TIMEOUT
+from config import TIMEOUT, FPS
 
 app = Flask(__name__)
-_FRAME_DELAY = 0.04  # Оптимизация задержки между кадрами
+
+_FRAME_DELAY = 1/FPS  # Оптимизация задержки между кадрами
 
 # Главная страница с активными подключениями
 @app.route('/')
 def index():
+    logging.getLogger('werkzeug').disabled = True
     server = app.config.get('server')
     if not server:
         abort(500)
@@ -82,4 +84,4 @@ def video_feed(client_id):
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, )

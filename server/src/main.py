@@ -84,32 +84,6 @@ class UDPHandler(socketserver.BaseRequestHandler):
         except Exception as e:
             logging.error(f"Ошибка при обработке данных от {self.client_address}: {e}")
 
-# Показываем собранные кадры в окне P.S нафиг не надо с вебкой
-# def display_frames(server):
-#     while getattr(server, '_BaseServer__is_shut_down', False) is False:
-#         try:
-#             with server.frames_lock:
-#                 frames = list(server.frames.values())
-
-#             if frames:
-#                 combined_frame = cv2.hconcat(frames)  # Склеиваем кадры горизонтально
-#                 cv2.imshow("All Clients", combined_frame)
-#             else:
-#                 # Показываем заглушку если кадров нет
-#                 blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-#                 cv2.putText(blank_frame, 'NO DATA', (200, 250),
-#                            cv2.FONT_HERSHEY_SIMPLEX, 2, (255,255,255), 6)
-#                 cv2.imshow("All Clients", blank_frame)
-
-#             if cv2.waitKey(1) & 0xFF == ord('q'):  # Выход по Q
-#                 server.shutdown()
-#                 break
-#         except Exception as e:
-#             logging.error(f"Ошибка в отображении: {e}")
-#             break
-
-#     cv2.destroyAllWindows()
-
 # Удаляем клиентов которые долго не пишут
 def cleanup_inactive_clients(server):
     while getattr(server, '_BaseServer__is_shut_down', False) is False:
@@ -144,7 +118,6 @@ if __name__ == "__main__":
     # Запускаем три важные штуки параллельно
     threads = [
         threading.Thread(target=cleanup_inactive_clients, args=(server,)),  # Очистка
-        # threading.Thread(target=display_frames, args=(server,)),            # Показ видео нафиг не надо с вебкой
         threading.Thread(target=app.run, kwargs={                           # Веб-интерфейс
             'host': WEB_HOST,
             'port': WEB_PORT,
