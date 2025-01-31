@@ -38,7 +38,7 @@ def get_video():
         sys.exit(1)
 
     # Рассчитываем позицию текста один раз
-    text = f"{ID_DEVICE} | 00:00:00"  # Шаблон
+    text = f"{ID_DEVICE}, 00:00:00"  # Шаблон
     (text_width, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
     x = (640 - text_width) // 16
     y = 30

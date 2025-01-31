@@ -8,10 +8,13 @@ app = Flask(__name__)
 
 _FRAME_DELAY = 1/FPS  # Оптимизация задержки между кадрами
 
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
 # Главная страница с активными подключениями
 @app.route('/')
 def index():
-    logging.getLogger('werkzeug').disabled = True
+    # logging.getLogger('werkzeug').disabled = True
     server = app.config.get('server')
     if not server:
         abort(500)

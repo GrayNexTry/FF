@@ -24,10 +24,22 @@ class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
         self.frames = {}    # Собранные кадры для отображения
         self.clients = set()   # Подключенные клиенты
         self.last_activity = {}  # Когда последний раз что-то присылали
-        # Локи чтобы не было гонки данных между потоками
+        self.is_running = False
+        self.server_ready = threading.Event()  # Событие для синхронизации
         self.buffer_lock = threading.RLock()
         self.frames_lock = threading.RLock()
         self.clients_lock = threading.RLock()
+
+    def serve_forever(self):
+        self.is_running = True
+        self.server_ready.set()  # Сигнализируем о готовности сервера
+        logging.info("Сервер запускается...")
+        try:
+            super().serve_forever()
+            logging.info("Сервер запущен без ошибок.")
+        finally:
+            self.is_running = False
+            logging.info("Сервер выключен.")
 
 # Обработчик входящих UDP пакетов
 class UDPHandler(socketserver.BaseRequestHandler):
@@ -82,12 +94,14 @@ class UDPHandler(socketserver.BaseRequestHandler):
                         del self.server.buffer[client_addr]
 
         except Exception as e:
-            logging.error(f"Ошибка при обработке данных от {self.client_address}: {e}")
+            logging.error(f"Ошибка при обработке данных от {self.client_address}: {e}ю")
 
 # Удаляем клиентов которые долго не пишут
 def cleanup_inactive_clients(server):
-    while getattr(server, '_BaseServer__is_shut_down', False) is False:
-        time.sleep(1)
+    server.server_ready.wait()  # Ждем готовности сервера
+    logging.info("Цикл очистки неактивных клиентов запущен.")
+    while server.is_running:
+        time.sleep(5)
         current_time = time.time()
         with server.clients_lock:
             # Ищем тех, кто превысил таймаут
@@ -129,7 +143,6 @@ if __name__ == "__main__":
     for t in threads:
         t.daemon = True  # Чтобы потоки умерли когда основной умрет
         t.start()
-
     try:
         logging.info(f"Сервер слушает на {HOST}:{PORT}")
         logging.info(f"Вебка доступна тут: http://{WEB_HOST}:{WEB_PORT}")
