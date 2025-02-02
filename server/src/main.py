@@ -50,13 +50,19 @@ class UDPHandler(socketserver.BaseRequestHandler):
 
             # Проверяем белый список чтобы пускать только своих
             with self.server.clients_lock:
-                if client_addr[0] in WHITELIST and WHITELIST_ON:
-                    if client_addr not in self.server.clients:
-                        self.server.clients.add(client_addr)
-                        self.server.last_activity[client_addr] = time.time()
-                        logging.info(f"{client_addr} подключился.")
-                else:
-                    return  # Если не в белом списке, игнорируем
+                allowed = not WHITELIST or client_addr[0] in WHITELIST
+                if allowed and client_addr not in self.server.clients:
+                    self.server.clients.add(client_addr)
+                    self.server.last_activity[client_addr] = time.time()
+                    logging.info(f"{client_addr} подключился.")
+
+                # if client_addr[0] in WHITELIST and WHITELIST_ON:
+                #     if client_addr not in self.server.clients:
+                #         self.server.clients.add(client_addr)
+                #         self.server.last_activity[client_addr] = time.time()
+                #         logging.info(f"{client_addr} подключился.")
+                # else:
+                #     return  # Если не в белом списке, игнорируем
 
             # Обновляем время последней активности
             self.server.last_activity[client_addr] = time.time()
