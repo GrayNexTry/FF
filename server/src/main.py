@@ -7,7 +7,7 @@ import socket
 import threading
 import logging
 from threading import RLock
-from config import WHITELIST, TIMEOUT
+from config import WHITELIST, WHITELIST_ON, TIMEOUT
 from web_server import app
 
 # Настраиваем логер чтобы видеть что происходит
@@ -50,7 +50,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
 
             # Проверяем белый список чтобы пускать только своих
             with self.server.clients_lock:
-                if client_addr[0] in WHITELIST:
+                if client_addr[0] in WHITELIST and WHITELIST_ON:
                     if client_addr not in self.server.clients:
                         self.server.clients.add(client_addr)
                         self.server.last_activity[client_addr] = time.time()
