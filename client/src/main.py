@@ -16,7 +16,7 @@ DELAY = 1 / FPS
 # Общие переменные между потоками (с блокировками!)
 frame = None  # Текущий кадр с камеры
 frame_lock = threading.Lock()  # Замок для кадра
-now_time = "NONE | 00:00:00"  # Текущее время для надписи
+now_time = "NONE 00:00:00"  # Текущее время для надписи
 now_time_lock = threading.Lock()  # Замок для времени
 
 # Поток для обновления времени каждую секунду
@@ -38,7 +38,7 @@ def get_video():
         sys.exit(1)
 
     # Рассчитываем позицию текста один раз
-    text = f"{ID_DEVICE}, 00:00:00"  # Шаблон
+    text = f"{ID_DEVICE} 00:00:00"  # Шаблон
     (text_width, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
     x = (640 - text_width) // 16
     y = 30
@@ -52,7 +52,7 @@ def get_video():
 
         # Обновляем время в тексте с блокировкой
         with now_time_lock:  # Блокируем доступ на чтение
-            time_text = f"{ID_DEVICE} | {now_time}"
+            time_text = f"{ID_DEVICE} {now_time}"
 
         # Рисуем текст на кадре
         frame_with_text = cv2.putText(

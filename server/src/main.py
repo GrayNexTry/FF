@@ -136,8 +136,7 @@ if __name__ == "__main__":
             'host': WEB_HOST,
             'port': WEB_PORT,
             'debug': False,
-            'use_reloader': False
-        })
+            'use_reloader': False })
     ]
 
     for t in threads:
