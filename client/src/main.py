@@ -21,6 +21,7 @@ now_time_lock = threading.Lock()  # Замок для времени
 
 # Поток для обновления времени каждую секунду
 def get_time():
+    logging.info("Поток получения настоящего времени успешно запущен.")
     global now_time
     while True:
         t = time.localtime()
@@ -30,6 +31,7 @@ def get_time():
 
 # Поток для захвата видео с камеры
 def get_video():
+    logging.info("Поток получения видео с камеры успешно запущен.")
     global frame
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FPS, FPS)
@@ -68,6 +70,7 @@ def get_video():
 
 # Поток для отправки видео через UDP
 def send_video(ip, port):
+    logging.info("Поток отправки видео на сервер успешно запущен.")
     server_address = (ip, port)
 
     try:
@@ -133,12 +136,13 @@ if __name__ == "__main__":
 
     # Запускаем все потоки
     threads = [
-        threading.Thread(target=get_time, daemon=True),
-        threading.Thread(target=get_video, daemon=True),
-        threading.Thread(target=send_video, args=(ip, port), daemon=True)
+        threading.Thread(target=get_time),
+        threading.Thread(target=get_video),
+        threading.Thread(target=send_video, args=(ip, port))
     ]
 
     for t in threads:
+        t.daemon = True
         t.start()
 
     # Ждем завершения (или Ctrl+C)

@@ -1,4 +1,3 @@
 WHITELIST = []
-WHITELIST_ON = True
 TIMEOUT = 5
 FPS = 30

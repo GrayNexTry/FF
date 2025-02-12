@@ -7,7 +7,7 @@ import socket
 import threading
 import logging
 from threading import RLock
-from config import WHITELIST, WHITELIST_ON, TIMEOUT
+from config import WHITELIST, TIMEOUT
 from web_server import app
 
 # Настраиваем логер чтобы видеть что происходит
@@ -24,21 +24,18 @@ class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
         self.frames = {}    # Собранные кадры для отображения
         self.clients = set()   # Подключенные клиенты
         self.last_activity = {}  # Когда последний раз что-то присылали
-        self.is_running = False
         self.server_ready = threading.Event()  # Событие для синхронизации
         self.buffer_lock = threading.RLock()
         self.frames_lock = threading.RLock()
         self.clients_lock = threading.RLock()
 
     def serve_forever(self):
-        self.is_running = True
         self.server_ready.set()  # Сигнализируем о готовности сервера
         logging.info("Сервер запускается...")
         try:
             super().serve_forever()
             logging.info("Сервер запущен без ошибок.")
         finally:
-            self.is_running = False
             logging.info("Сервер выключен.")
 
 # Обработчик входящих UDP пакетов
@@ -54,15 +51,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
                 if allowed and client_addr not in self.server.clients:
                     self.server.clients.add(client_addr)
                     self.server.last_activity[client_addr] = time.time()
-                    logging.info(f"{client_addr} подключился.")
-
-                # if client_addr[0] in WHITELIST and WHITELIST_ON:
-                #     if client_addr not in self.server.clients:
-                #         self.server.clients.add(client_addr)
-                #         self.server.last_activity[client_addr] = time.time()
-                #         logging.info(f"{client_addr} подключился.")
-                # else:
-                #     return  # Если не в белом списке, игнорируем
+                    logging.warn(f"{client_addr} подключился.")
 
             # Обновляем время последней активности
             self.server.last_activity[client_addr] = time.time()
@@ -100,13 +89,13 @@ class UDPHandler(socketserver.BaseRequestHandler):
                         del self.server.buffer[client_addr]
 
         except Exception as e:
-            logging.error(f"Ошибка при обработке данных от {self.client_address}: {e}ю")
+            logging.error(f"Ошибка при обработке данных от {self.client_address}: {e}.")
 
 # Удаляем клиентов которые долго не пишут
 def cleanup_inactive_clients(server):
     server.server_ready.wait()  # Ждем готовности сервера
-    logging.info("Цикл очистки неактивных клиентов запущен.")
-    while server.is_running:
+    logging.info("Поток удаление неактивных клиентов успешно запущен.")
+    while True:
         time.sleep(5)
         current_time = time.time()
         with server.clients_lock:
@@ -123,7 +112,7 @@ def cleanup_inactive_clients(server):
                 with server.buffer_lock:
                     server.buffer.pop(addr, None)
                 server.last_activity.pop(addr, None)
-                logging.info(f"{addr} отключен по таймауту.")
+                logging.warn(f"{addr} отключен по таймауту.")
 
 # Запускаем всё здесь
 if __name__ == "__main__":
@@ -157,4 +146,3 @@ if __name__ == "__main__":
     finally:
         server.shutdown()
         server.server_close()
-        cv2.destroyAllWindows()

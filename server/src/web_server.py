@@ -1,7 +1,7 @@
 import time
 import logging
 import cv2
-from flask import Flask, Response, render_template_string, abort, jsonify
+from flask import Flask, Response, render_template_string, abort
 from config import TIMEOUT, FPS
 
 app = Flask(__name__)
