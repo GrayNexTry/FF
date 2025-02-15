@@ -15,16 +15,16 @@ logging.basicConfig(level=logging.INFO)
 
 # Класс для UDP сервера с потоками (чтобы всё не лагало)
 class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
-    daemon_threads = True  # Потоки сами умрут когда надо
-    block_on_close = False
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
         self.buffer = {}    # Здесь храним кусочки видео от клиентов
         self.frames = {}    # Собранные кадры для отображения
         self.clients = set()   # Подключенные клиенты
         self.last_activity = {}  # Когда последний раз что-то присылали
+
         self.server_ready = threading.Event()  # Событие для синхронизации
+
         self.buffer_lock = threading.RLock()
         self.frames_lock = threading.RLock()
         self.clients_lock = threading.RLock()
@@ -51,7 +51,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
                 if allowed and client_addr not in self.server.clients:
                     self.server.clients.add(client_addr)
                     self.server.last_activity[client_addr] = time.time()
-                    logging.warn(f"{client_addr} подключился.")
+                    logging.warning(f"{client_addr} подключился.")
 
             # Обновляем время последней активности
             self.server.last_activity[client_addr] = time.time()
@@ -112,7 +112,7 @@ def cleanup_inactive_clients(server):
                 with server.buffer_lock:
                     server.buffer.pop(addr, None)
                 server.last_activity.pop(addr, None)
-                logging.warn(f"{addr} отключен по таймауту.")
+                logging.warning(f"{addr} отключен по таймауту.")
 
 # Запускаем всё здесь
 if __name__ == "__main__":
