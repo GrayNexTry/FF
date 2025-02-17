@@ -1,5 +1,6 @@
 # Импорты для работы с видео, сетью и потоками
 import cv2
+import os
 import socket
 import threading
 import sys
@@ -126,13 +127,18 @@ def send_video(ip, port):
 # Запуск всего хозяйства
 if __name__ == "__main__":
     # Получаем данные для подключения
+    os.system('clear||cls') # Очищение консоли
     connect = input("Сервак кормушек, формат: ip:port: ").strip()
-    try:
-        ip, port_str = connect.split(':')
-        port = int(port_str)
-    except:
-        logging.error("Неправильный формат! Пример: 192.168.1.10:50005")
-        sys.exit(1)
+    if connect != "":
+        try:
+            ip, port_str = connect.split(':')
+            port = int(port_str)
+        except:
+            logging.error("Неправильный формат! Пример: 192.168.1.10:50005.")
+            sys.exit(1)
+    else:
+        ip, port = "localhost", 50005
+        logging.info("Установлены стандартные localhost и 50005.")
 
     # Запускаем все потоки
     threads = [

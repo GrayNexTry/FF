@@ -1,7 +1,8 @@
 import time
+import os
 import logging
 import cv2
-from flask import Flask, Response, render_template_string, abort
+from flask import Flask, Response, render_template_string, abort, jsonify
 from config import TIMEOUT, FPS
 
 app = Flask(__name__)
@@ -45,6 +46,24 @@ def index():
         </html>
     ''', clients=client_list)
 
+@app.route('/get_online_clients')
+def get_online_clients():
+    server = app.config.get('server')
+    if not server:
+        abort(500)
+    with server.clients_lock:
+        client_list = [[addr[0], addr[1]] for addr in server.clients]
+    return jsonify(client_list)
+
+@app.route('/get_count_online_clients')
+def get_count_online_clients():
+    server = app.config.get('server')
+    if not server:
+        abort(500)
+    with server.clients_lock:
+        count = len(server.clients)
+    return jsonify(count)
+
 # Потоковая передача видео для конкретного клиента
 @app.route('/video/<client_id>')
 def video_feed(client_id):
@@ -64,24 +83,18 @@ def video_feed(client_id):
 
     def generate():
         while True:
-            # Объединенная проверка состояния
-            with server.clients_lock:
-                current_clients = client_addr in server.clients
-                last_active = server.last_activity.get(client_addr, 0)
-            current_time = time.time()
-            if not current_clients or (current_time - last_active) > TIMEOUT:
-                break
+            if client_addr in server.clients:
+                with server.frames_lock:
+                    jpeg_data = server.frames.get(client_addr)
 
-            # Получение кадра с минимальной блокировкой
-            with server.frames_lock:
-                frame = server.frames.get(client_addr)
-            if frame is not None:
-                ret, jpeg = cv2.imencode('.jpg', frame)
-                if ret:
+                if jpeg_data:
                     yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n'
-                           + jpeg.tobytes() + b'\r\n')
-            time.sleep(_FRAME_DELAY)
+                        b'Content-Type: image/jpeg\r\n\r\n'
+                        + jpeg_data + b'\r\n')
+
+                time.sleep(_FRAME_DELAY)
+            else:
+                break
 
     return Response(generate(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')

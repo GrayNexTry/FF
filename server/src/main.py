@@ -5,6 +5,7 @@ import numpy as np
 import cv2
 import socket
 import threading
+import os
 import logging
 from threading import RLock
 from config import WHITELIST, TIMEOUT
@@ -51,7 +52,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
                 if allowed and client_addr not in self.server.clients:
                     self.server.clients.add(client_addr)
                     self.server.last_activity[client_addr] = time.time()
-                    logging.warning(f"{client_addr} подключился.")
+                    logging.info(f"{client_addr} подключился.")
 
             # Обновляем время последней активности
             self.server.last_activity[client_addr] = time.time()
@@ -75,16 +76,14 @@ class UDPHandler(socketserver.BaseRequestHandler):
                 # Записываем кусочек в нужное место
                 client_buffer[packet_seq][packet_num] = payload
 
-                # Если все кусочки кадра собраны
+              # Если все кусочки кадра собраны
                 if all(part is not None for part in client_buffer[packet_seq]):
                     frame_data = b''.join(client_buffer[packet_seq])  # Склеиваем
-                    frame = cv2.imdecode(np.frombuffer(frame_data, np.uint8), cv2.IMREAD_UNCHANGED)
 
-                    if frame is not None:
-                        with self.server.frames_lock:
-                            self.server.frames[client_addr] = frame  # Сохраняем кадр
+                    with self.server.frames_lock:
+                        self.server.frames[client_addr] = frame_data  # Сохраняем как bytes
 
-                    del client_buffer[packet_seq]  # Чистим память
+                    del client_buffer[packet_seq]
                     if not client_buffer:
                         del self.server.buffer[client_addr]
 
@@ -118,6 +117,8 @@ def cleanup_inactive_clients(server):
 if __name__ == "__main__":
     HOST, PORT = '0.0.0.0', 50005       # Настройки для UDP
     WEB_HOST, WEB_PORT = '0.0.0.0', 5000  # Настройки для веб-сервера
+
+    os.system('clear||cls') # Очищение консоли
 
     server = ThreadedUDPServer((HOST, PORT), UDPHandler)
     server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4*1024*1024)  # Буфер побольше
