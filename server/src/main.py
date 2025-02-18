@@ -98,7 +98,7 @@ def cleanup_inactive_clients(server):
         time.sleep(5)
         current_time = time.time()
         with server.clients_lock:
-            # Ищем тех, кто превысил таймаут
+            # Ищем тех, кто превысил таймауттаймаут
             inactive_clients = [
                 addr for addr in server.clients
                 if current_time - server.last_activity.get(addr, 0) > TIMEOUT
@@ -125,7 +125,7 @@ if __name__ == "__main__":
 
     app.config['server'] = server  # Даем веб-серверу доступ к нашему серверу
 
-    # Запускаем три важные штуки параллельно
+    # Запускаем потоки
     threads = [
         threading.Thread(target=cleanup_inactive_clients, args=(server,)),  # Очистка
         threading.Thread(target=app.run, kwargs={                           # Веб-интерфейс

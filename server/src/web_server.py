@@ -2,6 +2,7 @@ import time
 import os
 import logging
 import cv2
+from threading import Event
 from flask import Flask, Response, render_template_string, abort, jsonify
 from config import TIMEOUT, FPS
 
@@ -82,6 +83,7 @@ def video_feed(client_id):
             abort(404)
 
     def generate():
+        next_frame_time = time.time()
         while True:
             if client_addr in server.clients:
                 with server.frames_lock:
@@ -92,7 +94,10 @@ def video_feed(client_id):
                         b'Content-Type: image/jpeg\r\n\r\n'
                         + jpeg_data + b'\r\n')
 
-                time.sleep(_FRAME_DELAY)
+                next_frame_time += _FRAME_DELAY
+                sleep_time = next_frame_time - time.time()
+                if sleep_time > 0:
+                    Event().wait(sleep_time)
             else:
                 break
 

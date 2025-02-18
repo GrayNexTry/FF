@@ -7,6 +7,7 @@ import sys
 import time
 import logging
 from config import MTU_SIZE, ID_DEVICE, JPEG_QUALITY, FPS
+from threading import Event
 
 # Настройка логов чтобы видеть ошибки
 logging.basicConfig(level=logging.INFO)
@@ -40,18 +41,22 @@ def get_video():
         logging.error("Камера не работает! Проверь подключение.")
         sys.exit(1)
 
+    _ , current_frame = cap.read()
+
     # Рассчитываем позицию текста один раз
     text = f"{ID_DEVICE} 00:00:00"  # Шаблон
     (text_width, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-    x = (640 - text_width) // 16
+    x = (current_frame.shape[1] - text_width) // 16
     y = 30
 
+    next_frame = time.time() + DELAY
     while True:
         # Читаем кадр и добавляем текст
         ret, current_frame = cap.read()
         if not ret:
             logging.error("Не могу прочитать кадр! Камера сломалась?")
-            break
+            cap.release()
+            sys.exit(1)
 
         # Обновляем время в тексте с блокировкой
         with now_time_lock:  # Блокируем доступ на чтение
@@ -65,9 +70,10 @@ def get_video():
 
         # Сохраняем кадр с блокировкой
         with frame_lock:
-            frame = frame_with_text.copy()
+            frame = frame_with_text
 
-        time.sleep(DELAY)  # Ждем перед следующим кадром
+            time.sleep(max(0, next_frame - time.time()))
+            next_frame += DELAY
 
 # Поток для отправки видео через UDP
 def send_video(ip, port):
@@ -80,6 +86,8 @@ def send_video(ip, port):
         sock.settimeout(5)
 
         packet_seq = 0  # Счетчик пакетов
+
+        next_frame = time.time() + DELAY
 
         while True:
             # Берем текущий кадр с блокировкой
@@ -117,8 +125,13 @@ def send_video(ip, port):
                 sock.sendto(header + chunk, server_address)
 
             packet_seq = (packet_seq + 1) % 2**32  # Чтобы не переполнилось
-            time.sleep(DELAY)
+            time.sleep(max(0, next_frame - time.time()))
+            next_frame += DELAY
 
+    except socket.timeout:
+        logging.warning("Таймаут отправки. Переподключение...")
+        sock.close()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     except Exception as e:
         logging.error(f"Ошибка отправки: {e}")
     finally:

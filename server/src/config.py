@@ -1,3 +1,3 @@
-WHITELIST = []
+WHITELIST = {}
 TIMEOUT = 5
-FPS = 30
+FPS = 31
