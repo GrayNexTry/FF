@@ -3,9 +3,9 @@ import socketserver
 import time
 import numpy as np
 import cv2
-import socket
 import threading
 import os
+import socket
 import logging
 from threading import RLock
 from config import WHITELIST, TIMEOUT
@@ -98,7 +98,7 @@ def cleanup_inactive_clients(server):
         time.sleep(5)
         current_time = time.time()
         with server.clients_lock:
-            # Ищем тех, кто превысил таймауттаймаут
+            # Ищем тех, кто превысил таймаут
             inactive_clients = [
                 addr for addr in server.clients
                 if current_time - server.last_activity.get(addr, 0) > TIMEOUT
@@ -131,9 +131,13 @@ if __name__ == "__main__":
         threading.Thread(target=app.run, kwargs={                           # Веб-интерфейс
             'host': WEB_HOST,
             'port': WEB_PORT,
+            # 'ssl_context' : ('FF/server/src/pem/cert.pem', 'FF/server/src/pem/key.pem'),
             'debug': False,
-            'use_reloader': False })
+            'use_reloader': False,
+            'threaded': True  })
     ]
+
+
 
     for t in threads:
         t.daemon = True  # Чтобы потоки умерли когда основной умрет

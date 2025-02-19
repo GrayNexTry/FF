@@ -13,7 +13,8 @@ _FRAME_DELAY = 1/FPS  # Оптимизация задержки между ка�
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
-# Главная страница с активными подключениями
+# Общедоступные
+
 @app.route('/')
 def index():
     # logging.getLogger('werkzeug').disabled = True
@@ -35,10 +36,19 @@ def index():
                 </script>
             </head>
             <body>
+                <h1>Доступные API запросы:</h1>
+                <div>
+                    <a href="/clients">Онлайн клиенты</a><br>
+                    <a href="/number_clients">Количество онлайн клиентов</a><br>
+                </div>
                 <h1>Активные подключения:</h1>
                 <div id="client-list">
                     {% for client in clients %}
-                        <a href="/video/{{ client }}">{{ client }}</a><br>
+                        <div>
+                            <h2>{{ client }}:</h2>
+                            <a href="/video/{{ client }}">Прямой поток {{ client }}</a><br>
+                            <a href="/screenshot/{{ client }}">Скрин {{ client }}</a><br>
+                        </div>
                     {% else %}
                         <p>Нет активных подключений</p>
                     {% endfor %}
@@ -47,8 +57,9 @@ def index():
         </html>
     ''', clients=client_list)
 
-@app.route('/get_online_clients')
-def get_online_clients():
+
+@app.route('/clients', methods=['GET'])
+def get_clients():
     server = app.config.get('server')
     if not server:
         abort(500)
@@ -56,14 +67,38 @@ def get_online_clients():
         client_list = [[addr[0], addr[1]] for addr in server.clients]
     return jsonify(client_list)
 
-@app.route('/get_count_online_clients')
-def get_count_online_clients():
+@app.route('/number_clients',  methods=['GET'])
+def get_number_clients():
     server = app.config.get('server')
     if not server:
         abort(500)
     with server.clients_lock:
         count = len(server.clients)
     return jsonify(count)
+
+@app.route('/screenshot/<client_id>', methods=['GET'])
+def screenshot(client_id):
+    server = app.config.get('server')
+    if not server:
+        abort(500)
+    try:
+        ip, port = client_id.rsplit(':', 1)
+        client_addr = (ip, int(port))
+    except ValueError:
+        abort(404)
+
+    # Однократная проверка активности клиента
+    with server.clients_lock:
+        if client_addr not in server.clients:
+            abort(404)
+
+    if client_addr in server.clients:
+        with server.frames_lock:
+            jpeg_data = server.frames.get(client_addr)
+            if not jpeg_data:
+                abort(500)
+
+    return Response(jpeg_data, mimetype='image/jpeg')
 
 # Потоковая передача видео для конкретного клиента
 @app.route('/video/<client_id>')
@@ -88,6 +123,8 @@ def video_feed(client_id):
             if client_addr in server.clients:
                 with server.frames_lock:
                     jpeg_data = server.frames.get(client_addr)
+                    if not jpeg_data:
+                        yield
 
                 if jpeg_data:
                     yield (b'--frame\r\n'
@@ -97,7 +134,7 @@ def video_feed(client_id):
                 next_frame_time += _FRAME_DELAY
                 sleep_time = next_frame_time - time.time()
                 if sleep_time > 0:
-                    Event().wait(sleep_time)
+                    time.sleep(sleep_time)
             else:
                 break
 
