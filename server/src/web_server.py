@@ -2,19 +2,78 @@ import time
 import os
 import logging
 import cv2
+from os.path import join, dirname
+from dotenv import load_dotenv
 from threading import Event
-from flask import Flask, Response, render_template, abort, jsonify
+from functools import wraps
+from flask import Flask, Response, render_template, abort, jsonify, session, redirect, url_for, request
 from config import TIMEOUT, FPS
 
-app = Flask(__name__, template_folder='web')
+# Первоначальная настройка
 
-_FRAME_DELAY = 1/FPS  # Оптимизация задержки между кадрами
+app = Flask(__name__, template_folder='web')
 
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
-# Общедоступные
+dotenv_path = join(dirname(__file__), '.env')
+load_dotenv(dotenv_path)
 
+# Константы
+
+_FRAME_DELAY = 1/FPS  # Оптимизация задержки между кадрами
+
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
+ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD')
+
+SECRET_KEY = os.getenv('SECRET_KEY')
+
+# Доп. настройки
+
+app.secret_key = SECRET_KEY
+
+
+# Декоратор для проверки доступа
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('authenticated'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+# Страничка для входа
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        if (request.form.get('login') == ADMIN_USERNAME and
+            request.form.get('password') == ADMIN_PASSWORD):
+            session['authenticated'] = True
+            session.permanent = True
+            return redirect(url_for('index'))
+        return "Ошибка доступа.", 401
+    return '''
+        <form method="post">
+            <input type="text" name="login" placeholder="Login">
+            <input type="password" name="password" placeholder="Password">
+            <button type="submit">Войти</button>
+        </form>
+    '''
+
+# Страничка для выхода
+@app.route('/logout')
+def logout():
+    session.pop('authenticated', None)
+    return "<p>Вы успешно вышли из аккаунта</p>"
+
+# Приватные
+
+@app.route("/test_required")
+@login_required
+def test():
+    return "<p>Если ты это видишь, значит ты авторизован.</p>"
+
+# Общедоступные
 @app.route('/')
 def index():
     # logging.getLogger('werkzeug').disabled = True
@@ -25,8 +84,9 @@ def index():
         client_list = [f"{addr[0]}:{addr[1]}" for addr in server.clients]
     return render_template('index.html', clients=client_list)
 
-
+# Получение ip,port всех онлайн клиентов. json
 @app.route('/clients', methods=['GET'])
+@login_required
 def get_clients():
     server = app.config.get('server')
     if not server:
@@ -34,7 +94,7 @@ def get_clients():
     with server.clients_lock:
         client_list = [[addr[0], addr[1]] for addr in server.clients]
     return jsonify(client_list)
-
+# Получение количество онлайн клиентов, json
 @app.route('/number_clients',  methods=['GET'])
 def get_number_clients():
     server = app.config.get('server')
@@ -43,7 +103,7 @@ def get_number_clients():
     with server.clients_lock:
         count = len(server.clients)
     return jsonify(count)
-
+# Получение скрина в момент времени клиента. jpg
 @app.route('/screenshot/<client_id>', methods=['GET'])
 def screenshot(client_id):
     server = app.config.get('server')
@@ -68,7 +128,7 @@ def screenshot(client_id):
 
     return Response(jpeg_data, mimetype='image/jpeg')
 
-# Потоковая передача видео для конкретного клиента
+# Потоковая передача видео для конкретного клиента. jpg's
 @app.route('/video/<client_id>')
 def video_feed(client_id):
     server = app.config.get('server')

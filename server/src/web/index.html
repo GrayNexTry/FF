@@ -19,11 +19,6 @@
     </script>
 </head>
 <body>
-    <h1>Доступные API запросы:</h1>
-    <div>
-        <a href="/clients">Онлайн клиенты</a><br>
-        <a href="/number_clients">Количество онлайн клиентов</a><br>
-    </div>
     <h1>Активные подключения:</h1>
     <div id="client-list">
         {% if clients %}
@@ -37,6 +32,15 @@
         {% else %}
             <p>Нет активных подключений</p>
         {% endif %}
+    </div>
+    <h1>Доступные API запросы:</h1>
+    <div>
+        <a href="/clients">Онлайн клиенты</a><br>
+        <a href="/number_clients">Количество онлайн клиентов</a><br>
+    </div>
+    <h1>Приватные (которые требуют авторизации) API запросы:</h1>
+    <div>
+        <a href="/test_required">Тестовый</a><br>
     </div>
 </body>
 </html>
