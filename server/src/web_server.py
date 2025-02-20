@@ -52,13 +52,7 @@ def login():
             session.permanent = True
             return redirect(url_for('index'))
         return "Ошибка доступа.", 401
-    return '''
-        <form method="post">
-            <input type="text" name="login" placeholder="Login">
-            <input type="password" name="password" placeholder="Password">
-            <button type="submit">Войти</button>
-        </form>
-    '''
+    return render_template('login.html')
 
 # Страничка для выхода
 @app.route('/logout')
