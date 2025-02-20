@@ -3,10 +3,10 @@ import os
 import logging
 import cv2
 from threading import Event
-from flask import Flask, Response, render_template_string, abort, jsonify
+from flask import Flask, Response, render_template, abort, jsonify
 from config import TIMEOUT, FPS
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='web')
 
 _FRAME_DELAY = 1/FPS  # Оптимизация задержки между кадрами
 
@@ -23,39 +23,7 @@ def index():
         abort(500)
     with server.clients_lock:
         client_list = [f"{addr[0]}:{addr[1]}" for addr in server.clients]
-    return render_template_string('''
-        <html>
-            <head>
-                <title>Стримы</title>
-                <script>
-                    const eventSource = new EventSource("/stream");
-                    eventSource.onmessage = function(event) {
-                        const clients = event.data.split(',');
-                        document.getElementById("client-list").innerHTML = clients.map(c => `<a href="/video/${c}">${c}</a><br>`).join('');
-                    };
-                </script>
-            </head>
-            <body>
-                <h1>Доступные API запросы:</h1>
-                <div>
-                    <a href="/clients">Онлайн клиенты</a><br>
-                    <a href="/number_clients">Количество онлайн клиентов</a><br>
-                </div>
-                <h1>Активные подключения:</h1>
-                <div id="client-list">
-                    {% for client in clients %}
-                        <div>
-                            <h2>{{ client }}:</h2>
-                            <a href="/video/{{ client }}">Прямой поток {{ client }}</a><br>
-                            <a href="/screenshot/{{ client }}">Скрин {{ client }}</a><br>
-                        </div>
-                    {% else %}
-                        <p>Нет активных подключений</p>
-                    {% endfor %}
-                </div>
-            </body>
-        </html>
-    ''', clients=client_list)
+    return render_template('index.html', clients=client_list)
 
 
 @app.route('/clients', methods=['GET'])
@@ -141,5 +109,22 @@ def video_feed(client_id):
     return Response(generate(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, )
+@app.route('/stream')
+def stream():
+    server = app.config.get('server')
+    if not server:
+        abort(500)
+
+    def event_stream():
+            while True:
+                with server.clients_lock:
+                    client_list = [f"{addr[0]}:{addr[1]}" for addr in server.clients]
+                # Отправляем "empty" если клиентов нет
+                data = ','.join(client_list) if client_list else "empty"
+                yield f"data: {data}\n\n"
+                time.sleep(1)
+
+    return Response(event_stream(), mimetype="text/event-stream")
+
+# if __name__ == "__main__":
+#     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, )

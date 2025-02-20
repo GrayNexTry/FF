@@ -10,7 +10,11 @@ from config import MTU_SIZE, ID_DEVICE, JPEG_QUALITY, FPS
 from threading import Event
 
 # Настройка логов чтобы видеть ошибки
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s:%(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
 
 # Задержка между кадрами (вычисляем из FPS)
 DELAY = 1 / FPS

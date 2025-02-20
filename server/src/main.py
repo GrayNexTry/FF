@@ -8,17 +8,20 @@ import os
 import socket
 import logging
 from threading import RLock
-from config import WHITELIST, TIMEOUT
+from config import WHITELIST, TIMEOUT, MAX_BUFFER_SIZE
 from web_server import app
 
 # Настраиваем логер чтобы видеть что происходит
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s:%(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
 
 # Класс для UDP сервера с потоками (чтобы всё не лагало)
 class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
         self.buffer = {}    # Здесь храним кусочки видео от клиентов
         self.frames = {}    # Собранные кадры для отображения
         self.clients = set()   # Подключенные клиенты
@@ -38,6 +41,18 @@ class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
             logging.info("Сервер запущен без ошибок.")
         finally:
             logging.info("Сервер выключен.")
+
+    def shutdown(self):
+        super().shutdown()
+
+    def handle_buffer_size(self, client_addr):
+        with self.buffer_lock:
+            if client_addr in self.buffer and len(self.buffer[client_addr]) > MAX_BUFFER_SIZE:
+                # Удаляем самые старые кадры
+                sorted_frames = sorted(self.buffer[client_addr].keys())
+                frames_to_remove = len(self.buffer[client_addr]) - MAX_BUFFER_SIZE
+                for old_frame in sorted_frames[:frames_to_remove]:
+                    del self.buffer[client_addr][old_frame]
 
 # Обработчик входящих UDP пакетов
 class UDPHandler(socketserver.BaseRequestHandler):
@@ -76,7 +91,10 @@ class UDPHandler(socketserver.BaseRequestHandler):
                 # Записываем кусочек в нужное место
                 client_buffer[packet_seq][packet_num] = payload
 
-              # Если все кусочки кадра собраны
+                # Проверяем размер буфера после добавления нового пакета
+                self.server.handle_buffer_size(client_addr)
+
+                # Если все кусочки кадра собраны
                 if all(part is not None for part in client_buffer[packet_seq]):
                     frame_data = b''.join(client_buffer[packet_seq])  # Склеиваем
 
@@ -88,7 +106,7 @@ class UDPHandler(socketserver.BaseRequestHandler):
                         del self.server.buffer[client_addr]
 
         except Exception as e:
-            logging.error(f"Ошибка при обработке данных от {self.client_address}: {e}.")
+            logging.error(f"Ошибка при обработке данных от {self.client_address}: {e}")
 
 # Удаляем клиентов которые долго не пишут
 def cleanup_inactive_clients(server):
@@ -136,8 +154,6 @@ if __name__ == "__main__":
             'use_reloader': False,
             'threaded': True  })
     ]
-
-
 
     for t in threads:
         t.daemon = True  # Чтобы потоки умерли когда основной умрет

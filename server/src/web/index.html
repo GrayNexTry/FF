@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <title>Стримы</title>
+    <script>
+        const eventSource = new EventSource("/stream");
+        eventSource.onmessage = function(event) {
+            const clients = event.data === "empty" ? [] : event.data.split(',');
+            const clientList = document.getElementById("client-list");
+            clientList.innerHTML = clients.length > 0
+                ? clients.map(c => `
+                    <div class="client-block">
+                        <h2>${c}</h2>
+                        <a href="/video/${c}">Прямой поток ${c}</a><br>
+                        <a href="/screenshot/${c}">Скрин ${c}</a><br>
+                    </div>`).join('')
+                : '<p>Нет активных подключений</p>';
+        };
+    </script>
+</head>
+<body>
+    <h1>Доступные API запросы:</h1>
+    <div>
+        <a href="/clients">Онлайн клиенты</a><br>
+        <a href="/number_clients">Количество онлайн клиентов</a><br>
+    </div>
+    <h1>Активные подключения:</h1>
+    <div id="client-list">
+        {% if clients %}
+            {% for client in clients %}
+                <div class="client-block">
+                    <h2>{{ client }}</h2>
+                    <a href="/video/{{ client }}">Прямой поток {{ client }}</a><br>
+                    <a href="/screenshot/{{ client }}">Скрин {{ client }}</a><br>
+                </div>
+            {% endfor %}
+        {% else %}
+            <p>Нет активных подключений</p>
+        {% endif %}
+    </div>
+</body>
+</html>
