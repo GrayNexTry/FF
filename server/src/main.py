@@ -122,22 +122,27 @@ if __name__ == "__main__":
     server = ThreadedUDPServer((HOST, PORT), UDPHandler)
     server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4*1024*1024)
 
-    app.state.server = server  # Передаём сервер в FastAPI
+    app.state.server = server
+
+    def run_uvicorn():
+        uvicorn.run(app, host=WEB_HOST, port=WEB_PORT, log_level="info")
 
     threads = [
         threading.Thread(target=cleanup_inactive_clients, args=(server,)),
-        threading.Thread(target=server.serve_forever)
+        # threading.Thread(target=server.serve_forever),
+        threading.Thread(target=run_uvicorn),
     ]
 
     for t in threads:
-        t.daemon = True  # Чтобы потоки умерли когда основной умрет
+        t.daemon = True
         t.start()
+
     try:
         logging.info(f"Сервер слушает на {HOST}:{PORT}")
         logging.info(f"Вебка доступна тут: http://{WEB_HOST}:{WEB_PORT}")
-        uvicorn.run(app, host=WEB_HOST, port=WEB_PORT)
+        server.serve_forever()
     except KeyboardInterrupt:
-        logging.info("Выключение...")
-    finally:
+        logging.info("Получен сигнал завершения (Ctrl+C), выключаем...")
         server.shutdown()
         server.server_close()
+        logging.info("Сервер полностью остановлен.")
