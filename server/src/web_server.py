@@ -1,10 +1,8 @@
 import time
 import os
 import logging
-import secrets
-from os.path import join, dirname
-from dotenv import load_dotenv
 from fastapi import FastAPI, Response, Request, HTTPException, Depends
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from config import TIMEOUT, FPS
@@ -14,42 +12,13 @@ import asyncio
 # Первоначальная настройка
 app = FastAPI()
 
-log = logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s:%(levelname)s - %(message)s',
-    datefmt='%H:%M:%S'
-)
-
-dotenv_path = join(dirname(__file__), '.env')
-load_dotenv(dotenv_path)
+log = logging.getLogger('uvicorn')
 
 # Константы1
 _FRAME_DELAY = 1/FPS
 
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
-ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD')
-
-SECRET_KEY = secrets.token_urlsafe(32)
-
 # Шаблоны
 templates = Jinja2Templates(directory="FF/server/src/templates")
-
-# Зависимость для проверки авторизации
-async def verify_auth(request: Request):
-    auth = request.headers.get("Authorization")
-    if not auth or auth != f"Basic {ADMIN_USERNAME}:{ADMIN_PASSWORD}":
-        raise HTTPException(status_code=401, detail="Ошибка доступа")
-    return True
-
-# Страничка для входа
-@app.get("/login", response_class=HTMLResponse)
-async def login(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
-
-# Приватные
-@app.get("/test_required", response_class=HTMLResponse)
-async def test(auth: bool = Depends(verify_auth)):
-    return "<p>Если ты это видишь, значит ты авторизован.</p>"
 
 # Общедоступные
 @app.get("/", response_class=HTMLResponse)
@@ -63,7 +32,7 @@ async def index(request: Request):
 
 # Получение ip,port всех онлайн клиентов (json)
 @app.get("/clients", response_model=List[List[str]])
-async def get_clients(auth: bool = Depends(verify_auth)):
+async def get_clients():
     server = app.state.server
     if not server:
         raise HTTPException(status_code=500)
