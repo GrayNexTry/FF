@@ -1,184 +1,154 @@
 import time
 import os
 import logging
-import cv2
+import secrets
 from os.path import join, dirname
 from dotenv import load_dotenv
-from threading import Event
-from functools import wraps
-from flask import Flask, Response, render_template, abort, jsonify, session, redirect, url_for, request
+from fastapi import FastAPI, Response, Request, HTTPException, Depends
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.templating import Jinja2Templates
 from config import TIMEOUT, FPS
+from typing import List
+import asyncio
 
 # Первоначальная настройка
+app = FastAPI()
 
-app = Flask(__name__, template_folder='web')
-
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
+log = logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s:%(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
 
 dotenv_path = join(dirname(__file__), '.env')
 load_dotenv(dotenv_path)
 
-# Константы
-
-_FRAME_DELAY = 1/FPS  # Оптимизация задержки между кадрами
+# Константы1
+_FRAME_DELAY = 1/FPS
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD')
 
-SECRET_KEY = os.getenv('SECRET_KEY')
+SECRET_KEY = secrets.token_urlsafe(32)
 
-# Доп. настройки
+# Шаблоны
+templates = Jinja2Templates(directory="FF/server/src/templates")
 
-app.secret_key = SECRET_KEY
-
-
-# Декоратор для проверки доступа
-def login_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not session.get('authenticated'):
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated
+# Зависимость для проверки авторизации
+async def verify_auth(request: Request):
+    auth = request.headers.get("Authorization")
+    if not auth or auth != f"Basic {ADMIN_USERNAME}:{ADMIN_PASSWORD}":
+        raise HTTPException(status_code=401, detail="Ошибка доступа")
+    return True
 
 # Страничка для входа
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        if (request.form.get('login') == ADMIN_USERNAME and
-            request.form.get('password') == ADMIN_PASSWORD):
-            session['authenticated'] = True
-            session.permanent = True
-            return redirect(url_for('index'))
-        return "Ошибка доступа.", 401
-    return render_template('login.html')
-
-# Страничка для выхода
-@app.route('/logout')
-def logout():
-    session.pop('authenticated', None)
-    return "<p>Вы успешно вышли из аккаунта</p>"
+@app.get("/login", response_class=HTMLResponse)
+async def login(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
 
 # Приватные
-
-@app.route("/test_required")
-@login_required
-def test():
+@app.get("/test_required", response_class=HTMLResponse)
+async def test(auth: bool = Depends(verify_auth)):
     return "<p>Если ты это видишь, значит ты авторизован.</p>"
 
 # Общедоступные
-@app.route('/')
-def index():
-    # logging.getLogger('werkzeug').disabled = True
-    server = app.config.get('server')
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    server = app.state.server
     if not server:
-        abort(500)
+        raise HTTPException(status_code=500, detail="Server not initialized")
     with server.clients_lock:
         client_list = [f"{addr[0]}:{addr[1]}" for addr in server.clients]
-    return render_template('index.html', clients=client_list)
+    return templates.TemplateResponse("index.html", {"request": request, "clients": client_list})
 
-# Получение ip,port всех онлайн клиентов. json
-@app.route('/clients', methods=['GET'])
-@login_required
-def get_clients():
-    server = app.config.get('server')
+# Получение ip,port всех онлайн клиентов (json)
+@app.get("/clients", response_model=List[List[str]])
+async def get_clients(auth: bool = Depends(verify_auth)):
+    server = app.state.server
     if not server:
-        abort(500)
+        raise HTTPException(status_code=500)
     with server.clients_lock:
-        client_list = [[addr[0], addr[1]] for addr in server.clients]
-    return jsonify(client_list)
-# Получение количество онлайн клиентов, json
-@app.route('/number_clients',  methods=['GET'])
-def get_number_clients():
-    server = app.config.get('server')
+        client_list = [[addr[0], str(addr[1])] for addr in server.clients]
+    return client_list
+
+# Получение количества онлайн клиентов (json)
+@app.get("/number_clients")
+async def get_number_clients():
+    server = app.state.server
     if not server:
-        abort(500)
+        raise HTTPException(status_code=500)
     with server.clients_lock:
         count = len(server.clients)
-    return jsonify(count)
-# Получение скрина в момент времени клиента. jpg
-@app.route('/screenshot/<client_id>', methods=['GET'])
-def screenshot(client_id):
-    server = app.config.get('server')
+    return {"count": count}
+
+# Получение скрина в момент времени клиента (jpg)
+@app.get("/screenshot/{client_id}")
+async def screenshot(client_id: str):
+    server = app.state.server
     if not server:
-        abort(500)
+        raise HTTPException(status_code=500)
     try:
         ip, port = client_id.rsplit(':', 1)
         client_addr = (ip, int(port))
     except ValueError:
-        abort(404)
+        raise HTTPException(status_code=404)
 
-    # Однократная проверка активности клиента
     with server.clients_lock:
         if client_addr not in server.clients:
-            abort(404)
+            raise HTTPException(status_code=404)
 
-    if client_addr in server.clients:
-        with server.frames_lock:
-            jpeg_data = server.frames.get(client_addr)
-            if not jpeg_data:
-                abort(500)
+    with server.frames_lock:
+        jpeg_data = server.frames.get(client_addr)
+        if not jpeg_data:
+            raise HTTPException(status_code=500)
 
-    return Response(jpeg_data, mimetype='image/jpeg')
+    return Response(content=jpeg_data, media_type="image/jpeg")
 
-# Потоковая передача видео для конкретного клиента. jpg's
-@app.route('/video/<client_id>')
-def video_feed(client_id):
-    server = app.config.get('server')
+# Потоковая передача видео для конкретного клиента (jpg's)
+@app.get("/video/{client_id}")
+async def video_feed(client_id: str):
+    server = app.state.server
     if not server:
-        abort(500)
+        raise HTTPException(status_code=500)
     try:
         ip, port = client_id.rsplit(':', 1)
         client_addr = (ip, int(port))
     except ValueError:
-        abort(404)
+        raise HTTPException(status_code=404)
 
-    # Однократная проверка активности клиента
     with server.clients_lock:
         if client_addr not in server.clients:
-            abort(404)
+            raise HTTPException(status_code=404)
 
-    def generate():
+    async def generate():
         next_frame_time = time.time()
-        while True:
-            if client_addr in server.clients:
-                with server.frames_lock:
-                    jpeg_data = server.frames.get(client_addr)
-                    if not jpeg_data:
-                        yield
-
+        while client_addr in server.clients:
+            with server.frames_lock:
+                jpeg_data = server.frames.get(client_addr)
                 if jpeg_data:
                     yield (b'--frame\r\n'
-                        b'Content-Type: image/jpeg\r\n\r\n'
-                        + jpeg_data + b'\r\n')
+                           b'Content-Type: image/jpeg\r\n\r\n'
+                           + jpeg_data + b'\r\n')
+            next_frame_time += _FRAME_DELAY
+            sleep_time = next_frame_time - time.time()
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
 
-                next_frame_time += _FRAME_DELAY
-                sleep_time = next_frame_time - time.time()
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-            else:
-                break
+    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 
-    return Response(generate(),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/stream')
-def stream():
-    server = app.config.get('server')
+# Поток событий
+@app.get("/stream")
+async def stream():
+    server = app.state.server
     if not server:
-        abort(500)
+        raise HTTPException(status_code=500)
 
-    def event_stream():
-            while True:
-                with server.clients_lock:
-                    client_list = [f"{addr[0]}:{addr[1]}" for addr in server.clients]
-                # Отправляем "empty" если клиентов нет
-                data = ','.join(client_list) if client_list else "empty"
-                yield f"data: {data}\n\n"
-                time.sleep(1)
+    async def event_stream():
+        while True:
+            with server.clients_lock:
+                client_list = [f"{addr[0]}:{addr[1]}" for addr in server.clients]
+            data = ','.join(client_list) if client_list else "empty"
+            yield f"data: {data}\n\n"
+            await asyncio.sleep(1)
 
-    return Response(event_stream(), mimetype="text/event-stream")
-
-# if __name__ == "__main__":
-#     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, )
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
