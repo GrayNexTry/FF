@@ -12,7 +12,13 @@ import asyncio
 # Первоначальная настройка
 app = FastAPI()
 
-log = logging.getLogger('uvicorn')
+# log = logging.getLogger('uvicorn')
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s:%(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
 
 # Константы1
 _FRAME_DELAY = 1/FPS

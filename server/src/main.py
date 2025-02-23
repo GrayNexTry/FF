@@ -4,7 +4,6 @@ import threading
 import os
 import socket
 import logging
-import uvicorn
 from threading import RLock
 from config import WHITELIST, TIMEOUT, MAX_BUFFER_SIZE
 from web_server import app
@@ -125,7 +124,8 @@ if __name__ == "__main__":
     app.state.server = server
 
     def run_uvicorn():
-        uvicorn.run(app, host=WEB_HOST, port=WEB_PORT, log_level="info")
+        import uvicorn
+        uvicorn.run(app, host=WEB_HOST, port=WEB_PORT, access_log=False,log_level="critical")
 
     threads = [
         threading.Thread(target=cleanup_inactive_clients, args=(server,)),
