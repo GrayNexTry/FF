@@ -5,12 +5,16 @@ from fastapi import FastAPI, Response, Request, HTTPException, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from config import TIMEOUT, FPS
 from typing import List
 import asyncio
 
 # Первоначальная настройка
-app = FastAPI()
+app = FastAPI(
+    title="Feather Feed",
+    docs_url=None, redoc_url=None
+)
 
 # log = logging.getLogger('uvicorn')
 
@@ -23,8 +27,21 @@ logging.basicConfig(
 # Константы1
 _FRAME_DELAY = 1/FPS
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+# STATIC_DIR = os.path.join(BASE_DIR, "static")
+
 # Шаблоны
-templates = Jinja2Templates(directory="FF/server/src/templates")
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
+# app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# @app.get('/favicon.ico', include_in_schema=False)
+# async def favicon():
+#     file_path = os.path.join(os.path.dirname(__file__), "static", "favicon.ico")
+#     if not os.path.exists(file_path):
+#         raise HTTPException(status_code=404)
+#     with open(file_path, "rb") as f:
+#         return Response(f.read(), media_type="image/x-icon")
 
 # Общедоступные
 @app.get("/", response_class=HTMLResponse)
