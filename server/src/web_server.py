@@ -1,14 +1,17 @@
 import time
 import os
 import logging
-from fastapi import FastAPI, Response, Request, HTTPException, Depends
+from typing import List, Annotated
+import secrets
+import asyncio
+
+from fastapi import FastAPI, Response, Request, HTTPException, Depends, Cookie, Form
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+
 from config import TIMEOUT, FPS
-from typing import List
-import asyncio
 
 # Первоначальная настройка
 app = FastAPI(
@@ -16,13 +19,9 @@ app = FastAPI(
     docs_url=None, redoc_url=None
 )
 
-# log = logging.getLogger('uvicorn')
+log = logging.getLogger('uvicorn')
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s:%(levelname)s - %(message)s',
-    datefmt='%H:%M:%S'
-)
+security = HTTPBasic()
 
 # Константы1
 _FRAME_DELAY = 1/FPS
@@ -33,15 +32,6 @@ TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 
 # Шаблоны
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
-# app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-# @app.get('/favicon.ico', include_in_schema=False)
-# async def favicon():
-#     file_path = os.path.join(os.path.dirname(__file__), "static", "favicon.ico")
-#     if not os.path.exists(file_path):
-#         raise HTTPException(status_code=404)
-#     with open(file_path, "rb") as f:
-#         return Response(f.read(), media_type="image/x-icon")
 
 # Общедоступные
 @app.get("/", response_class=HTMLResponse)
@@ -64,7 +54,7 @@ async def get_clients():
     return client_list
 
 # Получение количества онлайн клиентов (json)
-@app.get("/number_clients")
+@app.get("/number_clients", response_model=int)
 async def get_number_clients():
     server = app.state.server
     if not server:
@@ -74,7 +64,7 @@ async def get_number_clients():
     return {"count": count}
 
 # Получение скрина в момент времени клиента (jpg)
-@app.get("/screenshot/{client_id}")
+@app.get("/screenshot/{client_id}", response_model=str)
 async def screenshot(client_id: str):
     server = app.state.server
     if not server:
@@ -126,7 +116,9 @@ async def video_feed(client_id: str):
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
 
-    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+    return StreamingResponse(generate(),
+                            media_type="multipart/x-mixed-replace; boundary=frame",
+                            headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 # Поток событий
 @app.get("/stream")
@@ -136,11 +128,14 @@ async def stream():
         raise HTTPException(status_code=500)
 
     async def event_stream():
+        prev_clients = set()
         while True:
             with server.clients_lock:
-                client_list = [f"{addr[0]}:{addr[1]}" for addr in server.clients]
-            data = ','.join(client_list) if client_list else "empty"
-            yield f"data: {data}\n\n"
-            await asyncio.sleep(1)
+                current_clients = set(f"{addr[0]}:{addr[1]}" for addr in server.clients)
+            if current_clients != prev_clients:
+                data = ','.join(current_clients) if current_clients else "empty"
+                yield f"data: {data}\n\n"
+                prev_clients = current_clients
+            await asyncio.sleep(0.1)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
