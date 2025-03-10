@@ -21,8 +21,6 @@ app = FastAPI(
 
 log = logging.getLogger('uvicorn')
 
-security = HTTPBasic()
-
 # Константы1
 _FRAME_DELAY = 1/FPS
 
