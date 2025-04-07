@@ -6,7 +6,7 @@ import threading
 import sys
 import time
 import logging
-from config import MTU_SIZE, ID_DEVICE, JPEG_QUALITY, FPS
+from config import MTU_SIZE, ID_DEVICE, JPEG_QUALITY, FPS, RECEIVE_PORT
 from threading import Event
 
 # Настройка логов чтобы видеть ошибки
@@ -141,6 +141,40 @@ def send_video(ip, port):
     finally:
         sock.close()
 
+def receive_commands(ip, port):
+    logging.info("Поток приема команд успешно запущен.")
+    command_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    command_socket.bind(('', port))
+    authorized_ip = ip  # Сохраняем разрешенный IP
+            
+    try:
+        while True:
+            data, addr = command_socket.recvfrom(1024)
+            sender_ip = addr[0]
+                    
+            if sender_ip != authorized_ip:
+                logging.warning(f"Попытка неавторизованного доступа с {sender_ip}")
+                continue
+                    
+            command = data.decode().strip()
+            logging.info(f"Получена команда: {command}")
+                    
+            # Обработка команд от авторизованного IP
+            if command == "stop":
+                logging.info("Получена команда остановки")
+                sys.exit(0)
+            
+            if command == "donate":
+                logging.info("Получена команда доната")
+                # Здесь можно добавить код для обработки доната
+                pass
+                
+                        
+    except Exception as e:
+        logging.error(f"Ошибка приема команд: {e}")
+    finally:
+        command_socket.close()
+
 # Запуск всего хозяйства
 if __name__ == "__main__":
     # Получаем данные для подключения
@@ -154,14 +188,15 @@ if __name__ == "__main__":
             logging.error("Неправильный формат! Пример: 192.168.1.10:50005.")
             sys.exit(1)
     else:
-        ip, port = "localhost", 50005
+        ip, port = "127.0.0.1", 50005
         logging.info("Установлены стандартные localhost и 50005.")
 
     # Запускаем все потоки
     threads = [
         threading.Thread(target=get_time),
         threading.Thread(target=get_video),
-        threading.Thread(target=send_video, args=(ip, port))
+        threading.Thread(target=send_video, args=(ip, port)),
+        threading.Thread(target=receive_commands, args=(ip, RECEIVE_PORT))
     ]
 
     for t in threads:

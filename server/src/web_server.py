@@ -5,7 +5,8 @@ from typing import List, Annotated
 import secrets
 import asyncio
 
-from fastapi import FastAPI, Response, Request, HTTPException, Depends, Cookie, Form
+from fastapi import FastAPI, Response, Request, HTTPException, Depends, Cookie
+from fastapi.params import Form
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -41,6 +42,26 @@ async def index(request: Request):
         client_list = [f"{addr[0]}:{addr[1]}" for addr in server.clients]
     return templates.TemplateResponse("index.html", {"request": request, "clients": client_list})
 
+@app.get("/command", response_class=HTMLResponse)
+async def command_form(request: Request):
+    return templates.TemplateResponse("command.html", {"request": request})
+
+@app.post("/command")
+async def send_command(ip: str = Form(), command: str = Form()):
+    try:
+        server = app.state.server
+        if not server:
+            return {"status": "error", "message": "Server not initialized"}
+            
+        success = server.send_command_to_client(ip, command)
+        
+        if success:
+            return {"status": "success", "message": "Command sent successfully"}
+        else:
+            return {"status": "error", "message": "Failed to send command"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 # Получение ip,port всех онлайн клиентов (json)
 @app.get("/clients", response_model=List[List[str]])
 async def get_clients():
@@ -52,14 +73,14 @@ async def get_clients():
     return client_list
 
 # Получение количества онлайн клиентов (json)
-@app.get("/number_clients", response_model=int)
+@app.get("/number_clients")
 async def get_number_clients():
     server = app.state.server
     if not server:
         raise HTTPException(status_code=500)
     with server.clients_lock:
         count = len(server.clients)
-    return {"count": count}
+    return count
 
 # Получение скрина в момент времени клиента (jpg)
 @app.get("/screenshot/{client_id}", response_model=str)

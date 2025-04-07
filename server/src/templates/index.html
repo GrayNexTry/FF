@@ -1,7 +1,45 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <title>Feather Feed </title>
+    <title>Feather Feed</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+        .client-block {
+            margin-bottom: 15px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        h2 {
+            color: #444;
+            margin: 0 0 10px 0;
+        }
+        a {
+            display: inline-block;
+            color: #4CAF50;
+            text-decoration: none;
+            padding: 5px 0;
+        }
+        a:hover {
+            color: #45a049;
+            text-decoration: underline;
+        }
+        .api-section {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+    </style>
     <script>
         const eventSource = new EventSource("/stream");
         eventSource.onmessage = function(event) {
@@ -19,7 +57,7 @@
     </script>
 </head>
 <body>
-    <h1>Активные подключения:</h1>
+    <h1>Активные подключения</h1>
     <div id="client-list">
         {% if clients %}
             {% for client in clients %}
@@ -33,10 +71,13 @@
             <p>Нет активных подключений</p>
         {% endif %}
     </div>
-    <h1>Доступные API запросы:</h1>
-    <div>
-        <a href="/clients">Онлайн клиенты</a><br>
-        <a href="/number_clients">Количество онлайн клиентов</a><br>
+    
+    <div class="api-section">
+        <h1>Доступные API запросы</h1>
+        <div>
+            <a href="/clients">Онлайн клиенты</a><br>
+            <a href="/number_clients">Количество онлайн клиентов</a><br>
+        </div>
     </div>
 </body>
 </html>

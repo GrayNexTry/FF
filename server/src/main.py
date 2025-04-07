@@ -5,7 +5,7 @@ import os
 import socket
 import logging
 from threading import RLock
-from config import WHITELIST, TIMEOUT, MAX_BUFFER_SIZE
+from config import WHITELIST, TIMEOUT, MAX_BUFFER_SIZE, CLIENT_RECEIVE_PORT
 from web_server import app
 
 # Настраиваем логгер
@@ -37,6 +37,35 @@ class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
 
     def shutdown(self):
         super().shutdown()
+        
+    
+    def send_command_to_client(self, ip, command):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            server = self
+            if server is None:
+                logging.error("Сервер не инициализирован в app.state.")
+                return False
+            with server.clients_lock:
+                if not any(ip in ips for ips in server.clients):
+                    logging.error(f"IP {ip} не в списке клиентов.")
+                    return False
+            #     if ip not in server.clients:
+            #         logging.warning(f"Клиент {ip} не подключен")
+            #         return False
+                                
+            sock.settimeout(2)
+                        
+                        # Use client's IP but different port for commands
+            command_addr = (ip, CLIENT_RECEIVE_PORT)
+            sock.sendto(command.encode(), command_addr)
+            return True
+                        
+        except Exception as e:
+            logging.error(f"Ошибка отправки команды: {e}")
+            return False
+        finally:
+            sock.close()
 
     def handle_buffer_size(self, client_addr):
         with self.buffer_lock:
