@@ -4,9 +4,38 @@ import threading
 import os
 import socket
 import logging
-from threading import RLock
 from config import WHITELIST, TIMEOUT, MAX_BUFFER_SIZE, CLIENT_RECEIVE_PORT
 from web_server import app
+
+class Client:
+    def __init__(self, ip, port):
+        self.ip = ip
+        self.port = port
+        self.last_activity = time.time()
+        self.buffer = {}  # Буфер для хранения пакетов
+        self.frames = []  # Список собранных фреймов
+
+    def add_packet(self, packet_seq, packet_num, total_packets, payload):
+        # Если последовательность новая, создаём список для пакетов
+        if packet_seq not in self.buffer:
+            self.buffer[packet_seq] = [None] * total_packets
+
+        # Сохраняем пакет в соответствующую позицию
+        self.buffer[packet_seq][packet_num] = payload
+
+        # Проверяем, завершена ли последовательность
+        if all(self.buffer[packet_seq]):
+            # Собираем данные в один фрейм
+            frame_data = b"".join(self.buffer[packet_seq])
+            self.frames.append(frame_data)
+            # Удаляем завершённую последовательность
+            del self.buffer[packet_seq]
+
+    def get_frames(self):
+        # Возвращаем собранные фреймы и очищаем список
+        frames = self.frames[:]
+        self.frames.clear()
+        return frames
 
 # Настраиваем логгер
 logging.basicConfig(
@@ -17,13 +46,8 @@ logging.basicConfig(
 class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.buffer = {}
-        self.frames = {}
-        self.clients = set()
-        self.last_activity = {}
+        self.clients = {}  # Хранит объекты Client {client_addr: Client}
         self.server_ready = threading.Event()
-        self.buffer_lock = threading.RLock()
-        self.frames_lock = threading.RLock()
         self.clients_lock = threading.RLock()
 
     def serve_forever(self):
@@ -67,13 +91,17 @@ class ThreadedUDPServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
         finally:
             sock.close()
 
-    def handle_buffer_size(self, client_addr):
-        with self.buffer_lock:
-            if client_addr in self.buffer and len(self.buffer[client_addr]) > MAX_BUFFER_SIZE:
-                sorted_frames = sorted(self.buffer[client_addr].keys())
-                frames_to_remove = len(self.buffer[client_addr]) - MAX_BUFFER_SIZE
-                for old_frame in sorted_frames[:frames_to_remove]:
-                    del self.buffer[client_addr][old_frame]
+    def get_or_create_client(self, client_addr):
+        with self.clients_lock:
+            if client_addr not in self.clients:
+                ip, port = client_addr
+                self.clients[client_addr] = Client(ip, port)
+            return self.clients[client_addr]
+
+    def remove_client(self, client_addr):
+        with self.clients_lock:
+            if client_addr in self.clients:
+                del self.clients[client_addr]
 
 class UDPHandler(socketserver.BaseRequestHandler):
     def handle(self):
@@ -81,42 +109,32 @@ class UDPHandler(socketserver.BaseRequestHandler):
             data, socket = self.request
             client_addr = self.client_address
 
+            # Проверяем, разрешён ли клиент
             with self.server.clients_lock:
                 allowed = not WHITELIST or client_addr[0] in WHITELIST
                 if allowed and client_addr not in self.server.clients:
-                    self.server.clients.add(client_addr)
-                    self.server.last_activity[client_addr] = time.time()
+                    self.server.clients[client_addr] = Client(*client_addr)
                     logging.info(f"{client_addr} подключился.")
 
-            self.server.last_activity[client_addr] = time.time()
+            # Получаем или создаём клиента
+            client = self.server.get_or_create_client(client_addr)
+            client.last_activity = time.time()
 
+            # Разбираем заголовок и полезную нагрузку
             header = data[:8]
             payload = data[8:]
             packet_seq = int.from_bytes(header[:4], 'big')
             packet_num = int.from_bytes(header[4:6], 'big')
             total_packets = int.from_bytes(header[6:8], 'big')
 
-            with self.server.buffer_lock:
-                if client_addr not in self.server.buffer:
-                    self.server.buffer[client_addr] = {}
+            # Добавляем пакет в буфер клиента
+            client.add_packet(packet_seq, packet_num, total_packets, payload)
 
-                client_buffer = self.server.buffer[client_addr]
-                if packet_seq not in client_buffer:
-                    client_buffer[packet_seq] = [None] * total_packets
-
-                client_buffer[packet_seq][packet_num] = payload
-
-                self.server.handle_buffer_size(client_addr)
-
-                if all(part is not None for part in client_buffer[packet_seq]):
-                    frame_data = b''.join(client_buffer[packet_seq])
-
-                    with self.server.frames_lock:
-                        self.server.frames[client_addr] = frame_data
-
-                    del client_buffer[packet_seq]
-                    if not client_buffer:
-                        del self.server.buffer[client_addr]
+            # Обрабатываем собранные фреймы
+            frames = client.get_frames()
+            for frame in frames:
+                with self.server.clients_lock:
+                    self.server.clients[client_addr].frames.append(frame)
 
         except Exception as e:
             logging.error(f"Ошибка при обработке данных от {self.client_address}: {e}")
@@ -129,16 +147,11 @@ def cleanup_inactive_clients(server):
         current_time = time.time()
         with server.clients_lock:
             inactive_clients = [
-                addr for addr in server.clients
-                if current_time - server.last_activity.get(addr, 0) > TIMEOUT
+                addr for addr, client in server.clients.items()
+                if current_time - client.last_activity > TIMEOUT
             ]
             for addr in inactive_clients:
-                server.clients.discard(addr)
-                with server.frames_lock:
-                    server.frames.pop(addr, None)
-                with server.buffer_lock:
-                    server.buffer.pop(addr, None)
-                server.last_activity.pop(addr, None)
+                server.remove_client(addr)
                 logging.warning(f"{addr} отключен по таймауту.")
 
 if __name__ == "__main__":
@@ -154,11 +167,10 @@ if __name__ == "__main__":
 
     def run_uvicorn():
         import uvicorn
-        uvicorn.run(app, host=WEB_HOST, port=WEB_PORT, access_log=False,log_level="critical")
+        uvicorn.run(app, host=WEB_HOST, port=WEB_PORT, access_log=False, log_level="critical")
 
     threads = [
         threading.Thread(target=cleanup_inactive_clients, args=(server,)),
-        # threading.Thread(target=server.serve_forever),
         threading.Thread(target=run_uvicorn),
     ]
 

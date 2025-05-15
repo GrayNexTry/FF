@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
+
 from config import TIMEOUT, FPS
 
 # Первоначальная настройка
@@ -26,13 +27,26 @@ log = logging.getLogger('uvicorn')
 _FRAME_DELAY = 1/FPS
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+from fastapi.responses import FileResponse
+
+# Подключение папки со статическими файлами
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
-# STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 # Шаблоны
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
+# Добавление маршрута для favicon
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    favicon_path = os.path.join(STATIC_DIR, "favicon.ico")
+    return FileResponse(favicon_path)
+
 # Общедоступные
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     server = app.state.server
@@ -83,25 +97,27 @@ async def get_number_clients():
     return count
 
 # Получение скрина в момент времени клиента (jpg)
-@app.get("/screenshot/{client_id}", response_model=str)
+@app.get("/screenshot/{client_id}", response_class=Response)
 async def screenshot(client_id: str):
     server = app.state.server
     if not server:
-        raise HTTPException(status_code=500)
+        raise HTTPException(status_code=500, detail="Server not initialized")
     try:
         ip, port = client_id.rsplit(':', 1)
         client_addr = (ip, int(port))
     except ValueError:
-        raise HTTPException(status_code=404)
+        raise HTTPException(status_code=404, detail="Invalid client ID format")
 
     with server.clients_lock:
         if client_addr not in server.clients:
-            raise HTTPException(status_code=404)
+            raise HTTPException(status_code=404, detail="Client not found")
 
-    with server.frames_lock:
-        jpeg_data = server.frames.get(client_addr)
-        if not jpeg_data:
-            raise HTTPException(status_code=500)
+        client = server.clients[client_addr]
+        frames = client.get_frames()  # Получаем кадры из метода get_frames
+        if not frames:
+            raise HTTPException(status_code=404, detail="No frames available")
+
+        jpeg_data = frames[-1]  # Берем последний доступный кадр
 
     return Response(content=jpeg_data, media_type="image/jpeg")
 
@@ -124,20 +140,22 @@ async def video_feed(client_id: str):
     async def generate():
         next_frame_time = time.time()
         while client_addr in server.clients:
-            with server.frames_lock:
-                jpeg_data = server.frames.get(client_addr)
-                if jpeg_data:
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n'
-                           + jpeg_data + b'\r\n')
+            with server.clients_lock:
+                client = server.clients[client_addr]
+                frames = client.get_frames()  # Получаем кадры из метода get_frames
+                if frames:
+                    for frame in frames:
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n\r\n'
+                               + frame + b'\r\n')
             next_frame_time += _FRAME_DELAY
             sleep_time = next_frame_time - time.time()
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
 
     return StreamingResponse(generate(),
-                            media_type="multipart/x-mixed-replace; boundary=frame",
-                            headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+                             media_type="multipart/x-mixed-replace; boundary=frame",
+                             headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 # Поток событий
 @app.get("/stream")

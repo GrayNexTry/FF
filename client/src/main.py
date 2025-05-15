@@ -24,12 +24,12 @@ frame = None  # Текущий кадр с камеры
 frame_lock = threading.Lock()  # Замок для кадра
 now_time = "NONE 00:00:00"  # Текущее время для надписи
 now_time_lock = threading.Lock()  # Замок для времени
+stop_event = Event()  # Событие для остановки потоков
 
 # Поток для обновления времени каждую секунду
 def get_time():
     logging.info("Поток получения настоящего времени успешно запущен.")
-    global now_time
-    while True:
+    while not stop_event.is_set():
         t = time.localtime()
         with now_time_lock:  # Блокируем доступ на запись
             now_time = time.strftime("%H:%M:%S", t)
@@ -54,7 +54,7 @@ def get_video():
     y = 30
 
     next_frame = time.time() + DELAY
-    while True:
+    while not stop_event.is_set():
         # Читаем кадр и добавляем текст
         ret, current_frame = cap.read()
         if not ret:
@@ -93,7 +93,7 @@ def send_video(ip, port):
 
         next_frame = time.time() + DELAY
 
-        while True:
+        while not stop_event.is_set():
             # Берем текущий кадр с блокировкой
             with frame_lock:
                 current_frame = frame
@@ -148,7 +148,7 @@ def receive_commands(ip, port):
     authorized_ip = ip  # Сохраняем разрешенный IP
             
     try:
-        while True:
+        while not stop_event.is_set():
             data, addr = command_socket.recvfrom(1024)
             sender_ip = addr[0]
                     
@@ -162,6 +162,7 @@ def receive_commands(ip, port):
             # Обработка команд от авторизованного IP
             if command == "stop":
                 logging.info("Получена команда остановки")
+                stop_event.set()  # Устанавливаем событие остановки
                 sys.exit(0)
             
             if command == "donate":
